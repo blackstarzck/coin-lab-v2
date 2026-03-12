@@ -40,6 +40,7 @@ class Settings:
     log_level: str
     allowed_origins: list[str]
     store_backend: str
+    database_url: str | None
     upbit_rest_base_url: str
     upbit_ws_public_url: str
     upbit_ws_private_url: str
@@ -57,6 +58,7 @@ def load_settings() -> Settings:
         log_level=os.getenv("COIN_LAB_LOG_LEVEL", "INFO"),
         allowed_origins=_parse_origins(os.getenv("COIN_LAB_ALLOWED_ORIGINS")),
         store_backend=os.getenv("COIN_LAB_STORE_BACKEND", "memory"),
+        database_url=os.getenv("COIN_LAB_DATABASE_URL"),
         upbit_rest_base_url=os.getenv("COIN_LAB_UPBIT_REST_BASE_URL", "https://api.upbit.com"),
         upbit_ws_public_url=os.getenv("COIN_LAB_UPBIT_WS_PUBLIC_URL", "wss://api.upbit.com/websocket/v1"),
         upbit_ws_private_url=os.getenv(

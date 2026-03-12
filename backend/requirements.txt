@@ -4,5 +4,11 @@ pydantic>=2.0
 python-dotenv
 httpx
 websockets
+psycopg2-binary>=2.9
 asyncpg
 supabase
+
+# dev / test
+pytest>=8.0
+pytest-asyncio>=0.24
+httpx  # also used by starlette TestClient

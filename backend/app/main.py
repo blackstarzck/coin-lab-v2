@@ -28,11 +28,18 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down Coin Lab API...")
 
 
-app = FastAPI(title="Coin Lab API", lifespan=lifespan)
-settings = load_settings()
+_settings = load_settings()
+_is_production = _settings.app_env == "production"
+
+app = FastAPI(
+    title="Coin Lab API",
+    lifespan=lifespan,
+    docs_url=None if _is_production else "/docs",
+    redoc_url=None if _is_production else "/redoc",
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.allowed_origins,
+    allow_origins=_settings.allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -51,7 +58,25 @@ async def app_error_handler(request: Request, exc: CoinLabError) -> JSONResponse
             "success": False,
             "error_code": error_code,
             "message": exc.message,
-            "details": exc.details,
+            "details": exc.details if not _is_production else {},
+            "trace_id": generate_trace_id(),
+            "timestamp": utc_now_iso(),
+        },
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    _ = request
+    logger = get_logger("app")
+    logger.exception("Unhandled exception: %s", exc)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "success": False,
+            "error_code": "INTERNAL_ERROR",
+            "message": "Internal server error" if _is_production else str(exc),
+            "details": {},
             "trace_id": generate_trace_id(),
             "timestamp": utc_now_iso(),
         },

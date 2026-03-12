@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..core.config import Settings, load_settings
-from ..infrastructure.repositories.in_memory_lab_store import InMemoryLabStore
 from ..infrastructure.repositories.lab_store import LabStore
 
 
@@ -64,7 +63,17 @@ class Container:
         UniverseService = getattr(universe_module, "UniverseService")
 
         settings = load_settings()
-        store = InMemoryLabStore()
+        store: LabStore
+        if settings.store_backend == "postgres":
+            if not settings.database_url:
+                raise RuntimeError("COIN_LAB_DATABASE_URL is required when STORE_BACKEND=postgres")
+            pg_module = importlib.import_module("app.infrastructure.repositories.postgres_lab_store")
+            PostgresLabStore = getattr(pg_module, "PostgresLabStore")
+            store = PostgresLabStore(settings.database_url)
+        else:
+            mem_module = importlib.import_module("app.infrastructure.repositories.in_memory_lab_store")
+            InMemoryLabStore = getattr(mem_module, "InMemoryLabStore")
+            store = InMemoryLabStore()
         store.seed_defaults()
         strategy_validator = StrategyValidator()
         risk_guard_service = RiskGuardService()
