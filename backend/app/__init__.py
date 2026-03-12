@@ -1,0 +1,1 @@
+"""Coin Lab application package."""
