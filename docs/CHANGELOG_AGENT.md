@@ -1,0 +1,572 @@
+# CHANGELOG_AGENT.md
+
+## 문서 정보
+- 제품명: Coin Lab
+- 문서 목적: 전략 연구, 실시간 모니터링, 백테스트, PAPER/LIVE 실행을 하나의 제품 요구사항으로 정리한다.
+- 문서 상태: Draft
+- 기준 일자: 2026-03-12
+- 변경 이력: [CHANGELOG_AGENT.md](./CHANGELOG_AGENT.md)
+
+## Format
+- date
+- changed files
+- change type
+- summary
+- reason
+- impact
+- next work
+
+## 2026-03-10
+- changed files:
+  - AGENT.md
+  - DOC_INDEX.md
+  - DECISIONS.md
+  - ARCHITECTURE.md
+  - STRATEGY_SCHEMA.md
+  - EVENT_FLOW.md
+  - STATE_MACHINE.md
+  - DB_SCHEMA.md
+  - API_SPEC.md
+  - UI_IA.md
+  - TEST_STRATEGY.md
+  - CHANGELOG_AGENT.md
+- change type: initial document draft
+- summary:
+  - wrote the first project document set for the coin strategy lab
+- reason:
+  - establish SSOT documents before implementation
+- impact:
+  - architecture
+  - strategy schema
+  - event flow
+  - state machine
+  - database design
+  - API contracts
+  - UI structure
+  - test direction
+- next work:
+  - draft SQL-level schema
+  - expand API payload examples
+  - add sample strategy JSON
+
+## 2026-03-11
+- changed files:
+  - DOC_INDEX.md
+  - README_FINAL_DOCS.md
+  - CODEX_MASTER_PROMPT.md
+  - API_CONTRACTS.md
+  - API_SPEC.md
+  - API_PAYLOADS.md
+  - DB_SCHEMA.md
+  - DB_SCHEMA_SQL_LEVEL.md
+  - STRATEGY_DSL_SPEC.md
+  - EXECUTION_SIMULATION_SPEC.md
+  - STATE_MACHINE.md
+  - MONITORING_SCREEN_SPEC.md
+  - UI_IA.md
+  - ERROR_CODE_SPEC.md
+  - TEST_CASES.md
+  - CHANGELOG_AGENT.md
+- change type: document harmonization and reference linking
+- summary:
+  - promoted `PRE_IMPLEMENTATION_CONFLICTS.md` to the top conflict-resolution entry point
+  - unified REST paths to `/api/v1`
+  - unified API errors to `error_code + message + details + trace_id + timestamp`
+  - fixed the session model to single `strategy_version_id`
+  - aligned state enums and monitoring compare scope around session-level comparison
+- reason:
+  - remove implementation ambiguity between API, DB, UI, and state-machine documents
+- impact:
+  - API contracts
+  - session model
+  - enums
+  - DB schema
+  - monitoring UI
+  - implementation entry order
+- next work:
+  - close the remaining non-critical gaps before Phase 2 implementation
+
+## 2026-03-11 13:58:13 +09:00
+- changed files:
+  - PROJECT_STRUCTURE.md
+  - CHANGELOG_AGENT.md
+- change type: Phase 1 scaffold reflection
+- summary:
+  - updated the target repo structure to reflect the actual backend/frontend/workers/infra bootstrap
+- reason:
+  - the repository moved from docs-only to executable project skeleton
+- impact:
+  - project structure
+  - implementation entry paths
+  - backend/frontend bootstrap
+- next work:
+  - add strategy validator, storage, and dashboard contracts in Phase 2
+
+## 2026-03-11 15:20:00 +09:00
+- changed files:
+  - PRE_IMPLEMENTATION_CONFLICTS.md
+  - STRATEGY_DSL_SPEC.md
+  - API_SPEC.md
+  - API_CONTRACTS.md
+  - API_PAYLOADS.md
+  - MONITORING_SCREEN_SPEC.md
+  - UI_IA.md
+  - PROJECT_STRUCTURE.md
+  - CHANGELOG_AGENT.md
+- change type: remaining gap closure and Phase 2 implementation
+- summary:
+  - fixed the strategy DSL root shape as a canonical top-level object without a `meta` wrapper
+  - defined the `/api/v1/monitoring/summary` payload for dashboard and monitoring consumption
+  - implemented in-memory strategy/version/session/monitoring services and routes
+  - wired the frontend dashboard to live backend contracts and verified a production build
+- reason:
+  - remove the last open spec decisions that blocked validator and dashboard implementation
+- impact:
+  - strategy validation
+  - strategy version storage shape
+  - monitoring summary API
+  - frontend dashboard data flow
+  - runtime bootstrap services
+- next work:
+  - replace the in-memory store with persistent Supabase-backed repositories
+  - implement backtest execution and session detail subresources
+
+## 2026-03-11 15:50:00 +09:00
+- changed files:
+  - API_PAYLOADS.md
+  - PROJECT_STRUCTURE.md
+  - CHANGELOG_AGENT.md
+  - backend/app/application/container.py
+  - backend/app/application/services/backtest_service.py
+  - backend/app/application/services/log_service.py
+  - backend/app/application/services/session_service.py
+  - backend/app/api/routes/backtests.py
+  - backend/app/api/routes/logs.py
+  - backend/app/api/routes/sessions.py
+  - backend/app/infrastructure/repositories/in_memory_lab_store.py
+  - backend/app/schemas/backtest.py
+  - backend/app/schemas/log.py
+  - backend/app/schemas/session.py
+  - backend/tests/test_api_contracts.py
+  - frontend/src/app/App.tsx
+  - frontend/src/entities/backtest/types.ts
+  - frontend/src/entities/log/types.ts
+  - frontend/src/entities/session/types.ts
+  - frontend/src/entities/strategy/types.ts
+  - frontend/src/features/backtests/api.ts
+  - frontend/src/features/logs/api.ts
+  - frontend/src/features/sessions/api.ts
+  - frontend/src/features/strategies/api.ts
+  - frontend/src/pages/BacktestsPage.tsx
+  - frontend/src/pages/ComparePage.tsx
+  - frontend/src/pages/DashboardPage.tsx
+  - frontend/src/pages/LogsPage.tsx
+  - frontend/src/pages/MonitoringPage.tsx
+  - frontend/src/pages/SettingsPage.tsx
+  - frontend/src/pages/StrategiesPage.tsx
+  - frontend/src/shared/lib/format.ts
+  - frontend/src/stores/ui-store.ts
+  - frontend/src/theme/theme.ts
+  - frontend/src/widgets/layout/AppShell.tsx
+- change type: Phase 4 to Phase 5 surface expansion
+- summary:
+  - implemented session subresources for signals, positions, orders, risk events, and performance
+  - implemented backtest run/list/detail/trades/performance/equity/compare routes
+  - implemented structured log channels for system, strategy execution, order simulation, and risk control
+  - expanded the frontend into dashboard, monitoring, strategies, backtests, compare, logs, and settings pages
+  - added smoke-style API regression tests and refreshed the repo structure document
+- reason:
+  - close the remaining management and inspection surfaces needed for a usable local-first trading-console foundation
+- impact:
+  - backend API coverage
+  - in-memory seed realism
+  - frontend navigation and page depth
+  - regression safety
+  - document-to-implementation traceability
+- next work:
+  - replace the in-memory repository with Supabase-backed persistence
+  - wire market ingest, websocket streaming, and chart adapters
+
+## 2026-03-11 16:05:00 +09:00
+- changed files:
+  - PROJECT_STRUCTURE.md
+  - CHANGELOG_AGENT.md
+  - backend/app/application/services/market_ingest_service.py
+  - backend/app/schemas/market.py
+  - backend/app/workers/market_ingest.py
+  - backend/tests/test_market_ingest_service.py
+- change type: Phase 3 ingest foundation
+- summary:
+  - added normalized market-event models and an ingest service that applies dedupe, reorder-window drops, tick buffering, snapshot creation, freshness checks, and reconnect delay helpers
+  - upgraded the ingest worker bootstrap to exercise the new service with sample events
+  - added regression tests for the critical ingest invariants
+- reason:
+  - move the project from static management surfaces into the first execution-adjacent runtime layer required by the docs
+- impact:
+  - event ingestion rules
+  - snapshot freshness handling
+  - reconnect policy helpers
+  - test coverage for runtime edge cases
+- next work:
+  - introduce a concrete Upbit websocket adapter on top of the normalized ingest service
+  - start the paper/backtest execution pipeline on top of snapshots and signals
+
+## 2026-03-11 16:15:00 +09:00
+- changed files:
+  - PROJECT_STRUCTURE.md
+  - CHANGELOG_AGENT.md
+  - backend/requirements.txt
+  - backend/app/core/config.py
+  - backend/app/infrastructure/upbit/websocket_adapter.py
+  - backend/app/schemas/execution.py
+  - backend/app/application/services/execution_service.py
+  - backend/app/workers/market_ingest.py
+  - backend/tests/test_execution_service.py
+  - backend/tests/test_upbit_websocket_adapter.py
+  - workers/strategy_runtime.py
+  - workers/backtest.py
+  - frontend/src/entities/session/types.ts
+- change type: Upbit adapter and execution foundation
+- summary:
+  - added a concrete Upbit websocket adapter with request builders and public message normalization into the internal market-event envelope
+  - added execution simulation primitives for market fills, limit fills, fallback-to-market, fees, slippage, and entry risk guards
+  - upgraded worker bootstraps to exercise the new runtime services
+  - aligned session/order enums back toward the documented state machine
+- reason:
+  - move from ingest-only groundwork toward the first real execution-capable runtime path while keeping the design modular
+- impact:
+  - exchange integration boundary
+  - execution simulation
+  - worker bootstraps
+  - runtime regression coverage
+- next work:
+  - connect the Upbit websocket adapter to a persistent queue/snapshot store
+  - persist sessions, signals, positions, orders, and backtest runs through Supabase repositories
+
+## 2026-03-11 16:20:00 +09:00
+- changed files:
+  - PROJECT_STRUCTURE.md
+  - CHANGELOG_AGENT.md
+  - backend/app/application/services/runtime_service.py
+  - backend/app/schemas/runtime.py
+  - backend/tests/test_runtime_service.py
+  - workers/strategy_runtime.py
+- change type: Runtime orchestration foundation
+- summary:
+  - added a runtime service that turns session + signal + snapshot + risk context into an execution decision
+  - connected the strategy-runtime worker bootstrap to the runtime service
+  - added tests for stale-snapshot rejection, mode isolation, and blocked-signal short-circuiting
+- reason:
+  - create the missing seam between normalized market events and execution adapters
+- impact:
+  - signal processing flow
+  - adapter selection
+  - runtime regression coverage
+- next work:
+  - connect the runtime service to persisted session/signal/order stores
+  - replace the in-memory repository with Supabase-backed persistence
+
+## 2026-03-11 16:45:00 +09:00
+- changed files:
+  - PERSISTENCE_ALIGNMENT_ADDENDUM.md
+  - API_PAYLOADS.md
+  - PROJECT_STRUCTURE.md
+  - CHANGELOG_AGENT.md
+  - infra/supabase/001_init.sql
+  - backend/requirements.txt
+  - backend/app/api/router.py
+  - backend/app/api/ws_router.py
+  - backend/app/api/routes/universe.py
+  - backend/app/application/container.py
+  - backend/app/application/services/backtest_service.py
+  - backend/app/application/services/log_service.py
+  - backend/app/application/services/monitoring_service.py
+  - backend/app/application/services/runtime_service.py
+  - backend/app/application/services/session_service.py
+  - backend/app/application/services/strategy_service.py
+  - backend/app/application/services/stream_service.py
+  - backend/app/application/services/universe_service.py
+  - backend/app/core/config.py
+  - backend/app/infrastructure/repositories/in_memory_lab_store.py
+  - backend/app/infrastructure/repositories/lab_store.py
+  - backend/app/infrastructure/repositories/postgres_lab_store.py
+  - backend/app/schemas/chart.py
+  - backend/app/schemas/stream.py
+  - backend/app/schemas/universe.py
+  - backend/app/workers/market_ingest.py
+  - backend/tests/test_api_contracts.py
+  - backend/tests/test_runtime_service.py
+  - workers/backtest.py
+  - workers/strategy_runtime.py
+  - frontend/package.json
+  - frontend/package-lock.json
+  - frontend/src/entities/market/types.ts
+  - frontend/src/features/monitoring/api.ts
+  - frontend/src/features/monitoring/useChartStream.ts
+  - frontend/src/pages/BacktestsPage.tsx
+  - frontend/src/pages/MonitoringPage.tsx
+  - frontend/src/shared/charts/CandlestickChart.tsx
+  - frontend/src/shared/charts/LineChart.tsx
+  - frontend/src/shared/config/env.ts
+- change type: persistence and streaming expansion
+- summary:
+  - added a repository contract and optional Postgres/Supabase-backed store selection without breaking the existing in-memory path
+  - aligned the SQL migration with the API/UI materialized fields and added market candles, universe symbols, and backtest equity-curve persistence
+  - added universe APIs plus monitoring/chart websocket streams
+  - upgraded runtime and ingest flows to persist signals, orders, positions, logs, and chart-ready market snapshots through the active store
+  - added lightweight-charts adapters for monitoring price context and backtest equity curves
+- reason:
+  - close the remaining gap between the management console surface and a real persisted runtime foundation
+- impact:
+  - persistence architecture
+  - websocket delivery
+  - monitoring UX
+  - backtest UX
+  - runtime observability
+  - migration completeness
+- next work:
+  - wire a real authenticated LIVE execution adapter with explicit safety rails
+  - add a Postgres seed/bootstrap path for first-run local environments if persistent sample data is required
+
+## 2026-03-11 18:10:00 +09:00
+- changed files:
+  - CHANGELOG_AGENT.md
+  - PROJECT_STRUCTURE.md
+  - backend/app/application/services/execution_adapters.py
+  - backend/app/application/services/runtime_service.py
+  - backend/app/core/config.py
+  - backend/app/infrastructure/upbit/live_execution_adapter.py
+  - backend/tests/test_live_execution_adapter.py
+  - backend/tests/test_postgres_store_smoke.py
+  - backend/tests/test_runtime_service.py
+  - frontend/src/app/App.tsx
+  - frontend/src/pages/SettingsPage.tsx
+  - frontend/vite.config.ts
+- change type: live execution boundary and delivery hardening
+- summary:
+  - added a guarded Upbit live execution adapter with HS512 auth, deterministic identifiers, optional order-test validation, and uncertain-submit recovery by identifier lookup
+  - refactored runtime mode selection to execute through explicit adapters instead of a name-only branch
+  - added an env-gated Postgres smoke test for strategy, session, log, and chart persistence
+  - split frontend page loading and vendor chunks to reduce the main bundle weight
+- reason:
+  - close the remaining live-order and delivery gaps without mixing live behavior back into paper or backtest simulation code
+- impact:
+  - live execution safety
+  - runtime adapter isolation
+  - postgres verification path
+  - frontend delivery performance
+- next work:
+  - connect authenticated order-status polling and live exit handling to the runtime loop
+  - replace bootstrap worker payloads with real Upbit private-event consumers when live mode is enabled
+
+## 2026-03-12 09:20:00 +09:00
+- changed files:
+  - CHANGELOG_AGENT.md
+  - frontend/src/pages/StrategiesPage.tsx
+- change type: launch mode routing alignment
+- summary:
+  - extended the strategy launch surface so `BACKTEST`, `PAPER`, and `LIVE` are all selectable from one place
+  - routed `BACKTEST` launches to the backtest run API while keeping `PAPER` and `LIVE` on the session runtime path
+- reason:
+  - keep the UI mode model aligned with the documented three-mode architecture without mixing historical replay into the live session runtime
+- impact:
+  - strategy launch UX
+  - mode clarity
+  - backtest discoverability
+
+## 2026-03-12 10:05:00 +09:00
+- changed files:
+  - CHANGELOG_AGENT.md
+  - backend/app/api/routes/sessions.py
+  - backend/app/application/services/session_service.py
+  - backend/app/application/services/trading_runtime_manager.py
+  - backend/app/infrastructure/upbit/websocket_adapter.py
+  - backend/requirements.txt
+  - backend/tests/test_session_service.py
+  - backend/tests/test_trading_runtime_manager.py
+- change type: runtime subscription refresh
+- summary:
+  - replaced session-start runtime restart behavior with in-place subscription refresh requests so active runtime tasks stay alive while websocket subscriptions are rebuilt
+  - made session stop and kill paths refresh the active subscription set immediately
+  - added backend test dependency coverage for FastAPI TestClient by declaring `httpx`
+  - expanded unit tests to verify refresh-based session control and runtime task continuity
+- reason:
+  - remove avoidable realtime reconnect flicker when users start or stop modes from the strategy console
+- impact:
+  - realtime runtime stability
+  - monitoring websocket continuity
+  - session control responsiveness
+  - backend test reliability
+
+## 2026-03-12 10:35:00 +09:00
+- changed files:
+  - docs/*.md
+  - docs/CHANGELOG_AGENT.md
+  - docs/DOC_UPDATE_CHECKLIST.md
+- change type: documentation metadata normalization
+- summary:
+  - added a standard `## 문서 정보` block to every document under `docs/`
+  - linked every document header back to `CHANGELOG_AGENT.md` so update history can be checked from the document itself
+  - codified the metadata-and-history rule in `DOC_UPDATE_CHECKLIST.md`
+- reason:
+  - make document status, 기준 일자, and update traceability visible at the top of every specification
+- impact:
+  - documentation consistency
+  - reviewability
+  - change-history discoverability
+
+## 2026-03-12 10:19:19 +09:00
+- changed files:
+  - AI_MAINTENANCE_WORKFLOW.md
+  - DOC_UPDATE_CHECKLIST.md
+  - DOC_INDEX.md
+  - README_FINAL_DOCS.md
+  - CODEX_MASTER_PROMPT.md
+  - CHANGELOG_AGENT.md
+- change type: AI maintenance workflow and scenario taxonomy
+- summary:
+  - added a dedicated workflow document for AI-assisted maintenance work
+  - defined scenario types, risk tags, generation heuristics, and result-handling rules
+  - linked the workflow from the checklist, document index, final docs guide, and Codex prompt
+- reason:
+  - make behavior-changing maintenance work more explicit and deterministic before code is finalized
+- impact:
+  - AI maintenance process
+  - scenario generation
+  - test planning
+  - doc-driven implementation flow
+- impacted modes:
+  - BACKTEST
+  - PAPER
+  - LIVE
+- spec documents updated:
+  - DOC_UPDATE_CHECKLIST.md
+  - AI_MAINTENANCE_WORKFLOW.md
+  - CODEX_MASTER_PROMPT.md
+- test cases added/updated:
+  - none
+  - scenario generation now explicitly maps to existing `TEST_CASES.md` coverage
+- next work:
+  - apply the workflow on the next behavior-changing maintenance task and refine scenario packs from real usage
+
+## 2026-03-12 10:35:25 +09:00
+- changed files:
+  - AI_SCENARIO_CATALOG.md
+  - AI_MAINTENANCE_WORKFLOW.md
+  - DOC_UPDATE_CHECKLIST.md
+  - DOC_INDEX.md
+  - README_FINAL_DOCS.md
+  - CODEX_MASTER_PROMPT.md
+  - CHANGELOG_AGENT.md
+- change type: scenario catalog and expected-result standardization
+- summary:
+  - added a dedicated scenario catalog for AI-assisted maintenance work
+  - defined expected-result writing rules by scenario type and change category
+  - added reusable scenario packs with mapped test IDs, default verification methods, and escalation rules
+  - linked the new catalog from the workflow, checklist, docs index, final docs guide, and Codex prompt
+- reason:
+  - make scenario generation concrete enough to drive verification decisions instead of stopping at abstract checklist items
+- impact:
+  - expected-result quality
+  - maintenance verification depth
+  - scenario reuse
+  - test planning consistency
+- impacted modes:
+  - BACKTEST
+  - PAPER
+  - LIVE
+- spec documents updated:
+  - AI_MAINTENANCE_WORKFLOW.md
+  - AI_SCENARIO_CATALOG.md
+  - DOC_UPDATE_CHECKLIST.md
+  - CODEX_MASTER_PROMPT.md
+- test cases added/updated:
+  - none
+  - scenario packs now point back to existing `TEST_CASES.md` IDs and impacted suites
+- next work:
+  - apply the catalog to a real maintenance task and refine pack depth based on repeated use
+
+## 2026-03-12 15:48:31 +09:00
+- changed files:
+  - DESIGN_SYSTEM.md
+  - AI_UI_STYLE_GUIDE.md
+  - UI_IA.md
+  - MONITORING_SCREEN_SPEC.md
+  - DOC_INDEX.md
+  - README_FINAL_DOCS.md
+  - DOC_UPDATE_CHECKLIST.md
+  - AGENT.md
+  - CODEX_MASTER_PROMPT.md
+  - CHANGELOG_AGENT.md
+- change type: UI/design documentation alignment
+- summary:
+  - promoted `DESIGN_SYSTEM.md` to the visual SSOT for screen implementation
+  - clarified the role split between design system, UI IA, monitoring screen spec, and AI UI guide
+  - added screen-level composition guidance so frontend work can map routes to shared components and tokens
+  - updated index, checklist, and implementation prompts so future UI changes consistently review the design system
+- reason:
+  - make screen production start from a single visual baseline instead of spreading style decisions across multiple docs
+- impact:
+  - UI documentation discoverability
+  - screen implementation consistency
+  - AI/frontend implementation flow
+  - design token governance
+- impacted modes:
+  - BACKTEST
+  - PAPER
+  - LIVE
+- spec documents updated:
+  - DESIGN_SYSTEM.md
+  - AI_UI_STYLE_GUIDE.md
+  - UI_IA.md
+  - MONITORING_SCREEN_SPEC.md
+  - DOC_UPDATE_CHECKLIST.md
+  - AGENT.md
+  - CODEX_MASTER_PROMPT.md
+- test cases added/updated:
+  - none
+  - documentation-only alignment; no product behavior or test spec change
+- next work:
+  - apply the updated doc chain on the next frontend screen implementation and convert shared tokens into actual theme/component code
+
+## 2026-03-12 16:02:44 +09:00
+- changed files:
+  - DOC_INDEX.md
+  - README_FINAL_DOCS.md
+  - CODEX_MASTER_PROMPT.md
+  - DOC_UPDATE_CHECKLIST.md
+  - AGENT.md
+  - AI_MAINTENANCE_WORKFLOW.md
+  - AI_SCENARIO_CATALOG.md
+  - DESIGN_SYSTEM.md
+  - CHANGELOG_AGENT.md
+- change type: documentation consistency fixes
+- summary:
+  - promoted `PERSISTENCE_ALIGNMENT_ADDENDUM.md` into the official persistence SSOT reading order
+  - aligned the maintenance workflow and scenario catalog with the new `UI visual / design system change` category
+  - updated `AGENT.md` to point at the same implementation-era documents used by the checklist
+  - removed exchange-style top-bar and component examples from `DESIGN_SYSTEM.md` that did not match Coin Lab IA
+- reason:
+  - close the remaining contradictions found during cross-document consistency review so future implementation follows one coherent document chain
+- impact:
+  - persistence document discoverability
+  - AI maintenance workflow completeness
+  - agent/checklist consistency
+  - UI design guidance accuracy
+- impacted modes:
+  - BACKTEST
+  - PAPER
+  - LIVE
+- spec documents updated:
+  - DOC_INDEX.md
+  - DOC_UPDATE_CHECKLIST.md
+  - AI_MAINTENANCE_WORKFLOW.md
+  - AI_SCENARIO_CATALOG.md
+  - DESIGN_SYSTEM.md
+  - AGENT.md
+  - CODEX_MASTER_PROMPT.md
+- test cases added/updated:
+  - none
+  - documentation-only consistency fix; no runtime behavior changed
+- next work:
+  - run the updated document chain against the next real frontend or persistence task and refine any remaining ambiguous ownership boundaries
