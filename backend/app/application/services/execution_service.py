@@ -40,6 +40,18 @@ class ExecutionService:
         self._signals: dict[str, Signal] = {}
         self._position_bars: dict[str, int] = {}
 
+    def sync_positions(self, positions: list[Position]) -> None:
+        for position in positions:
+            self._positions[position.id] = position
+            if position.position_state in {PositionState.OPENING, PositionState.OPEN, PositionState.CLOSING}:
+                self._position_bars.setdefault(position.id, 0)
+
+    def has_open_position(self, session_id: str, symbol: str) -> bool:
+        return any(
+            position.symbol == symbol
+            for position in self._list_open_positions(session_id)
+        )
+
     def process_snapshot(
         self,
         session: Session,
@@ -98,6 +110,16 @@ class ExecutionService:
         strategy_config: dict[str, object],
         snapshot: MarketSnapshot,
     ) -> dict[str, object]:
+        if self.has_open_position(session.id, signal.symbol):
+            logger.info(
+                "Entry skipped because an open position already exists",
+                extra={"session_id": session.id, "symbol": signal.symbol, "error_code": error_codes.RISK_DUPLICATE_POSITION_BLOCKED},
+            )
+            return {
+                "accepted": False,
+                "reason_codes": [error_codes.RISK_DUPLICATE_POSITION_BLOCKED],
+            }
+
         intent = self._create_order_intent(signal, session, strategy_config, snapshot)
         order = Order(
             id=f"ord_{uuid4().hex[:12]}",

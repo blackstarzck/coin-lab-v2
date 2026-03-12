@@ -5,6 +5,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+from app.domain.seed_data import default_seed_data
 from app.domain.entities.session import (
     BacktestRun,
     BacktestTrade,
@@ -213,6 +214,7 @@ def _row_to_log_entry(row: dict[str, Any], channel: str) -> LogEntry:
         id=str(row["id"]),
         channel=channel,
         level=row["level"],
+        trace_id=row.get("trace_id"),
         session_id=row.get("session_id"),
         strategy_version_id=row.get("strategy_version_id"),
         symbol=row.get("symbol"),
@@ -248,7 +250,69 @@ class PostgresLabStore(LabStore):
     # ── seed ──────────────────────────────────────────────────────────────
 
     def seed_defaults(self) -> None:
-        pass  # Data persists in Postgres; no seeding needed.
+        seed_data = default_seed_data(datetime.now(UTC))
+        conn = self._get_conn()
+        try:
+            with conn.cursor(cursor_factory=self._cursor_factory()) as cur:
+                cur.execute("SELECT COUNT(*) AS universe_count FROM universe_symbols")
+                universe_count = int(cur.fetchone()["universe_count"])
+                cur.execute("SELECT COUNT(*) AS log_count FROM strategy_execution_logs")
+                log_count = int(cur.fetchone()["log_count"])
+
+            for bundle in seed_data.strategy_bundles:
+                if self.get_strategy(bundle.strategy.id) is None:
+                    seed_strategy = bundle.strategy
+                    self.create_strategy(
+                        Strategy(
+                            id=seed_strategy.id,
+                            strategy_key=seed_strategy.strategy_key,
+                            name=seed_strategy.name,
+                            strategy_type=seed_strategy.strategy_type,
+                            description=seed_strategy.description,
+                            is_active=seed_strategy.is_active,
+                            latest_version_id=None,
+                            latest_version_no=None,
+                            labels=seed_strategy.labels,
+                            last_7d_return_pct=seed_strategy.last_7d_return_pct,
+                            last_7d_win_rate=seed_strategy.last_7d_win_rate,
+                            created_at=seed_strategy.created_at,
+                            updated_at=seed_strategy.updated_at,
+                        )
+                    )
+                if self.get_strategy_version(bundle.version.id) is None:
+                    self.create_strategy_version(bundle.version)
+                strategy = self.get_strategy(bundle.strategy.id)
+                if strategy is not None and (
+                    strategy.latest_version_id != bundle.version.id
+                    or strategy.latest_version_no != bundle.version.version_no
+                ):
+                    strategy.latest_version_id = bundle.version.id
+                    strategy.latest_version_no = bundle.version.version_no
+                    strategy.updated_at = bundle.strategy.updated_at
+                    self.update_strategy(strategy)
+
+            if universe_count == 0:
+                with conn.cursor() as cur:
+                    for item in seed_data.universe_symbols:
+                        cur.execute(
+                            """INSERT INTO universe_symbols
+                               (symbol, turnover_24h_krw, surge_score, selected, updated_at)
+                               VALUES (%s, %s, %s, %s, %s)""",
+                            (
+                                item["symbol"],
+                                item["turnover_24h_krw"],
+                                item["surge_score"],
+                                item["selected"],
+                                datetime.now(UTC),
+                            ),
+                        )
+                conn.commit()
+
+            if log_count == 0:
+                for entry in seed_data.logs:
+                    self.append_log(entry)
+        finally:
+            self._put_conn(conn)
 
     # ── strategies ────────────────────────────────────────────────────────
 
@@ -360,6 +424,21 @@ class PostgresLabStore(LabStore):
         finally:
             self._put_conn(conn)
 
+    def list_strategy_versions_by_ids(self, version_ids: list[str]) -> list[StrategyVersion]:
+        if not version_ids:
+            return []
+        conn = self._get_conn()
+        try:
+            with conn.cursor(cursor_factory=self._cursor_factory()) as cur:
+                cur.execute(
+                    "SELECT * FROM strategy_versions WHERE id = ANY(%s)",
+                    (list(dict.fromkeys(version_ids)),),
+                )
+                rows = cur.fetchall()
+            return [_row_to_strategy_version(r) for r in rows]
+        finally:
+            self._put_conn(conn)
+
     def list_strategy_versions(self, strategy_id: str) -> list[StrategyVersion]:
         conn = self._get_conn()
         try:
@@ -468,6 +547,39 @@ class PostgresLabStore(LabStore):
         finally:
             self._put_conn(conn)
 
+    def update_session(self, session: Session) -> Session:
+        conn = self._get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """UPDATE sessions SET
+                       mode=%s, status=%s, strategy_version_id=%s,
+                       symbol_scope_json=%s, risk_overrides_json=%s,
+                       config_snapshot=%s, performance_json=%s,
+                       health_json=%s, trace_id=%s, started_at=%s,
+                       ended_at=%s, updated_at=%s
+                       WHERE id=%s""",
+                    (
+                        session.mode.value,
+                        session.status.value,
+                        session.strategy_version_id,
+                        self._json(session.symbol_scope_json),
+                        self._json(session.risk_overrides_json),
+                        self._json(session.config_snapshot),
+                        self._json(session.performance_json),
+                        self._json(session.health_json),
+                        session.trace_id,
+                        session.started_at,
+                        session.ended_at,
+                        session.updated_at,
+                        session.id,
+                    ),
+                )
+            conn.commit()
+            return session
+        finally:
+            self._put_conn(conn)
+
     # ── signals ───────────────────────────────────────────────────────────
 
     def create_signal(self, signal: Signal) -> Signal:
@@ -509,6 +621,21 @@ class PostgresLabStore(LabStore):
             self._put_conn(conn)
 
     # ── positions ─────────────────────────────────────────────────────────
+
+    def list_signals_for_sessions(self, session_ids: list[str]) -> list[Signal]:
+        if not session_ids:
+            return []
+        conn = self._get_conn()
+        try:
+            with conn.cursor(cursor_factory=self._cursor_factory()) as cur:
+                cur.execute(
+                    "SELECT * FROM signals WHERE session_id = ANY(%s) ORDER BY snapshot_time DESC",
+                    (list(dict.fromkeys(session_ids)),),
+                )
+                rows = cur.fetchall()
+            return [_row_to_signal(r) for r in rows]
+        finally:
+            self._put_conn(conn)
 
     def create_position(self, position: Position) -> Position:
         conn = self._get_conn()
@@ -555,6 +682,21 @@ class PostgresLabStore(LabStore):
                 cur.execute(
                     "SELECT * FROM positions WHERE session_id = %s ORDER BY created_at",
                     (session_id,),
+                )
+                rows = cur.fetchall()
+            return [_row_to_position(r) for r in rows]
+        finally:
+            self._put_conn(conn)
+
+    def list_positions_for_sessions(self, session_ids: list[str]) -> list[Position]:
+        if not session_ids:
+            return []
+        conn = self._get_conn()
+        try:
+            with conn.cursor(cursor_factory=self._cursor_factory()) as cur:
+                cur.execute(
+                    "SELECT * FROM positions WHERE session_id = ANY(%s) ORDER BY created_at DESC",
+                    (list(dict.fromkeys(session_ids)),),
                 )
                 rows = cur.fetchall()
             return [_row_to_position(r) for r in rows]
@@ -770,6 +912,21 @@ class PostgresLabStore(LabStore):
 
     # ── logs ──────────────────────────────────────────────────────────────
 
+    def list_risk_events_for_sessions(self, session_ids: list[str]) -> list[RiskEvent]:
+        if not session_ids:
+            return []
+        conn = self._get_conn()
+        try:
+            with conn.cursor(cursor_factory=self._cursor_factory()) as cur:
+                cur.execute(
+                    "SELECT * FROM risk_events WHERE session_id = ANY(%s) ORDER BY occurred_at DESC",
+                    (list(dict.fromkeys(session_ids)),),
+                )
+                rows = cur.fetchall()
+            return [_row_to_risk_event(r) for r in rows]
+        finally:
+            self._put_conn(conn)
+
     def append_log(self, entry: LogEntry) -> LogEntry:
         table = _LOG_TABLE_MAP.get(entry.channel)
         if table is None:
@@ -779,12 +936,12 @@ class PostgresLabStore(LabStore):
             with conn.cursor() as cur:
                 cur.execute(
                     f"""INSERT INTO {table}
-                        (level, session_id, strategy_version_id, symbol,
+                        (level, trace_id, session_id, strategy_version_id, symbol,
                          event_type, message, payload_json, logged_at)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
                         RETURNING id""",
                     (
-                        entry.level, entry.session_id,
+                        entry.level, entry.trace_id, entry.session_id,
                         entry.strategy_version_id, entry.symbol,
                         entry.event_type, entry.message,
                         self._json(entry.payload), entry.logged_at,
@@ -796,6 +953,8 @@ class PostgresLabStore(LabStore):
                 id=str(new_id),
                 channel=entry.channel,
                 level=entry.level,
+                trace_id=entry.trace_id,
+                mode=entry.mode,
                 session_id=entry.session_id,
                 strategy_version_id=entry.strategy_version_id,
                 symbol=entry.symbol,
@@ -840,7 +999,16 @@ class PostgresLabStore(LabStore):
                     tuple(params),
                 )
                 rows = cur.fetchall()
-            return [_row_to_log_entry(r, channel) for r in rows]
+            logs = [_row_to_log_entry(r, channel) for r in rows]
+            session_ids = {entry.session_id for entry in logs if entry.session_id}
+            session_modes = {
+                session_id: self.get_session(session_id).mode.value
+                for session_id in session_ids
+                if self.get_session(session_id) is not None
+            }
+            for entry in logs:
+                entry.mode = session_modes.get(entry.session_id)
+            return logs
         finally:
             self._put_conn(conn)
 

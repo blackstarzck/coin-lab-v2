@@ -20,8 +20,11 @@ import {
   Collapse,
   Divider
 } from '@mui/material'
+import type { ChipProps } from '@mui/material'
 import { Edit2, Play, ChevronDown, ChevronUp, ArrowLeft } from 'lucide-react'
 import { useStrategy, useStrategyVersions } from '@/features/strategies/api'
+import { useSessions } from '@/features/sessions/api'
+import { useBacktests } from '@/features/backtests/api'
 import { formatDistanceToNow, format } from 'date-fns'
 
 export default function StrategyDetailPage() {
@@ -29,6 +32,8 @@ export default function StrategyDetailPage() {
   const navigate = useNavigate()
   const { data: strategy, isLoading: isLoadingStrategy } = useStrategy(id!)
   const { data: versions, isLoading: isLoadingVersions } = useStrategyVersions(id!)
+  const { data: sessions } = useSessions()
+  const { data: backtests } = useBacktests()
 
   const [jsonExpanded, setJsonExpanded] = useState(false)
 
@@ -52,8 +57,11 @@ export default function StrategyDetailPage() {
   }
 
   const latestVersion = versions?.[0]
+  const strategyVersionIds = new Set((versions ?? []).map((version) => version.id))
+  const relatedSessions = (sessions ?? []).filter((session) => strategyVersionIds.has(session.strategy_version_id) && session.status === 'RUNNING')
+  const relatedBacktests = (backtests ?? []).filter((run) => strategyVersionIds.has(run.strategy_version_id))
 
-  const getTypeColor = (type: string) => {
+  const getTypeColor = (type: string): ChipProps['color'] => {
     switch (type) {
       case 'dsl': return 'info'
       case 'plugin': return 'warning'
@@ -75,7 +83,7 @@ export default function StrategyDetailPage() {
             <Chip 
               label={strategy.strategy_type.toUpperCase()} 
               size="small" 
-              color={getTypeColor(strategy.strategy_type) as any}
+              color={getTypeColor(strategy.strategy_type)}
             />
             <Box 
               sx={{ 
@@ -106,6 +114,7 @@ export default function StrategyDetailPage() {
           variant="contained" 
           color="primary" 
           startIcon={<Play size={16} />}
+          onClick={() => navigate('/backtests')}
         >
           Run Backtest
         </Button>
@@ -132,6 +141,10 @@ export default function StrategyDetailPage() {
                     <Typography variant="body1" sx={{ fontFamily: 'monospace' }}>
                       {latestVersion.config_hash.substring(0, 8)}...
                     </Typography>
+                  </Grid>
+                  <Grid item xs={6} sm={3}>
+                    <Typography variant="caption" color="text.tertiary">Validated</Typography>
+                    <Typography variant="body1">{latestVersion.is_validated ? 'Yes' : 'No'}</Typography>
                   </Grid>
                   <Grid item xs={6} sm={3}>
                     <Typography variant="caption" color="text.tertiary">Created</Typography>
@@ -293,7 +306,23 @@ export default function StrategyDetailPage() {
           <Card sx={{ mb: 3 }}>
             <CardContent>
               <Typography variant="h6" mb={2}>Recent Backtests</Typography>
-              <Typography color="text.secondary" variant="body2">No backtests for this strategy.</Typography>
+              {relatedBacktests.length === 0 ? (
+                <Typography color="text.secondary" variant="body2">No backtests for this strategy.</Typography>
+              ) : (
+                <Stack spacing={1.5}>
+                  {relatedBacktests.slice(0, 4).map((run) => (
+                    <Box key={run.id} sx={{ p: 1.5, borderRadius: 1, bgcolor: 'bg.surface2' }}>
+                      <Typography variant="body2" fontWeight={600}>{run.id.substring(0, 8)}</Typography>
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        {run.status} · {run.metrics?.trade_count ?? 0} trades
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: (run.metrics?.total_return_pct ?? 0) >= 0 ? 'status.success' : 'status.danger' }}>
+                        {(run.metrics?.total_return_pct ?? 0).toFixed(2)}% return
+                      </Typography>
+                    </Box>
+                  ))}
+                </Stack>
+              )}
             </CardContent>
           </Card>
 
@@ -301,7 +330,23 @@ export default function StrategyDetailPage() {
           <Card>
             <CardContent>
               <Typography variant="h6" mb={2}>Active Sessions</Typography>
-              <Typography color="text.secondary" variant="body2">No sessions for this strategy.</Typography>
+              {relatedSessions.length === 0 ? (
+                <Typography color="text.secondary" variant="body2">No sessions for this strategy.</Typography>
+              ) : (
+                <Stack spacing={1.5}>
+                  {relatedSessions.slice(0, 4).map((session) => (
+                    <Box key={session.id} sx={{ p: 1.5, borderRadius: 1, bgcolor: 'bg.surface2' }}>
+                      <Stack direction="row" justifyContent="space-between" alignItems="center">
+                        <Typography variant="body2" fontWeight={600}>{session.id.substring(0, 8)}</Typography>
+                        <Chip label={session.mode} size="small" variant="outlined" />
+                      </Stack>
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        {session.status} · {(session.symbol_scope.active_symbols ?? []).length} active symbols
+                      </Typography>
+                    </Box>
+                  ))}
+                </Stack>
+              )}
             </CardContent>
           </Card>
         </Grid>

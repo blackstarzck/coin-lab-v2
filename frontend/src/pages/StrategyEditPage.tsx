@@ -1,260 +1,299 @@
-import { useState, useEffect } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import type { ChangeEvent, ReactNode } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
 import {
-  Box,
-  Typography,
-  Card,
-  CardContent,
-  Button,
-  Tabs,
-  Tab,
-  TextField,
-  Grid,
-  Stack,
-  IconButton,
   Alert,
+  Box,
+  Button,
+  Card,
   CircularProgress,
-  Divider,
-  Select,
-  MenuItem,
   FormControl,
-  InputLabel,
   FormControlLabel,
+  Grid,
+  IconButton,
+  InputLabel,
+  MenuItem,
+  Select,
+  Stack,
   Switch,
-  Chip
+  Tab,
+  Tabs,
+  TextField,
+  Typography,
 } from '@mui/material'
-import { ArrowLeft, Save, X, CheckCircle2, AlertCircle } from 'lucide-react'
-import { useStrategy, useStrategyVersions, useValidateVersion } from '@/features/strategies/api'
+import { ArrowLeft, Save, X } from 'lucide-react'
 
-interface TabPanelProps {
-  children?: React.ReactNode
-  index: number
-  value: number
+import {
+  useCreateStrategyVersion,
+  useStrategy,
+  useStrategyVersions,
+  useUpdateStrategy,
+  useValidateDraft,
+  useValidateVersion,
+} from '@/features/strategies/api'
+import type { Strategy, StrategyVersion, ValidationResult } from '@/entities/strategy/types'
+
+type JsonObject = Record<string, unknown>
+
+interface DiffRow {
+  path: string
+  before: unknown
+  after: unknown
 }
 
-function TabPanel(props: TabPanelProps) {
-  const { children, value, index, ...other } = props
+function asObject(value: unknown): JsonObject {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonObject) : {}
+}
+
+function asArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => String(item)) : []
+}
+
+function asNumber(value: unknown, fallback = 0): number {
+  return typeof value === 'number' ? value : fallback
+}
+
+function parseNumberInput(value: string, fallback = 0): number {
+  const parsed = Number.parseFloat(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function parseIntegerInput(value: string, fallback = 0): number {
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function updateNestedConfig(config: JsonObject, path: string[], value: unknown): JsonObject {
+  const nextConfig: JsonObject = { ...config }
+  let current: JsonObject = nextConfig
+  for (let index = 0; index < path.length - 1; index += 1) {
+    const key = path[index]
+    current[key] = { ...asObject(current[key]) }
+    current = current[key] as JsonObject
+  }
+  current[path[path.length - 1]] = value
+  return nextConfig
+}
+
+function buildDiffRows(before: unknown, after: unknown, path = ''): DiffRow[] {
+  if (JSON.stringify(before) === JSON.stringify(after)) {
+    return []
+  }
+  const beforeIsObject = before && typeof before === 'object' && !Array.isArray(before)
+  const afterIsObject = after && typeof after === 'object' && !Array.isArray(after)
+  if (beforeIsObject && afterIsObject) {
+    const beforeObject = before as JsonObject
+    const afterObject = after as JsonObject
+    const keys = Array.from(new Set([...Object.keys(beforeObject), ...Object.keys(afterObject)])).sort()
+    return keys.flatMap((key) => buildDiffRows(beforeObject[key], afterObject[key], path ? `${path}.${key}` : key))
+  }
+  return [{ path: path || 'root', before, after }]
+}
+
+function buildDraftConfig(baseConfig: JsonObject, name: string, description: string, labels: string[], notes: string): JsonObject {
+  return {
+    ...baseConfig,
+    name,
+    description,
+    labels,
+    notes,
+  }
+}
+
+function JsonSection({
+  label,
+  value,
+  onChange,
+}: {
+  label: string
+  value: JsonObject
+  onChange: (next: JsonObject) => void
+}) {
   return (
-    <div
-      role="tabpanel"
-      hidden={value !== index}
-      id={`strategy-tabpanel-${index}`}
-      aria-labelledby={`strategy-tab-${index}`}
-      {...other}
-      style={{ height: '100%' }}
-    >
-      {value === index && (
-        <Box sx={{ p: 3, height: '100%', overflowY: 'auto' }}>
-          {children}
-        </Box>
-      )}
+    <TextField
+      label={label}
+      multiline
+      fullWidth
+      rows={14}
+      value={JSON.stringify(value, null, 2)}
+      onChange={(event) => {
+        try {
+          onChange(JSON.parse(event.target.value) as JsonObject)
+        } catch {
+          // Allow temporary invalid typing state.
+        }
+      }}
+      sx={{ '& textarea': { fontFamily: 'monospace' } }}
+    />
+  )
+}
+
+function TabPanel({ children, value, index }: { children?: ReactNode, value: number, index: number }) {
+  return (
+    <div hidden={value !== index} style={{ height: '100%' }}>
+      {value === index ? <Box sx={{ p: 3, height: '100%', overflowY: 'auto' }}>{children}</Box> : null}
     </div>
   )
 }
 
-export default function StrategyEditPage() {
-  const { id } = useParams<{ id: string }>()
-  const navigate = useNavigate()
-  const { data: strategy, isLoading: isLoadingStrategy } = useStrategy(id!)
-  const { data: versions, isLoading: isLoadingVersions } = useStrategyVersions(id!)
-  const validateMutation = useValidateVersion()
+function StrategyEditForm({
+  strategy,
+  versions,
+  onBack,
+  onSaved,
+}: {
+  strategy: Strategy
+  versions: StrategyVersion[]
+  onBack: () => void
+  onSaved: () => void
+}) {
+  const latestVersion = versions[0]
+  const updateStrategyMutation = useUpdateStrategy()
+  const createVersionMutation = useCreateStrategyVersion()
+  const validateDraftMutation = useValidateDraft()
+  const validateVersionMutation = useValidateVersion()
 
   const [tabValue, setTabValue] = useState(0)
-  const [configJson, setConfigJson] = useState<Record<string, any>>({})
-  const [jsonText, setJsonText] = useState('')
+  const [name, setName] = useState(strategy.name)
+  const [description, setDescription] = useState(strategy.description ?? '')
+  const [labelsText, setLabelsText] = useState(strategy.labels.join(', '))
+  const [notes, setNotes] = useState(latestVersion?.notes ?? '')
+  const [configJson, setConfigJson] = useState<JsonObject>(latestVersion?.config_json ?? {})
+  const [jsonText, setJsonText] = useState(JSON.stringify(latestVersion?.config_json ?? {}, null, 2))
   const [jsonError, setJsonError] = useState<string | null>(null)
-  const [validationResult, setValidationResult] = useState<{ is_valid: boolean, errors: string[], warnings: string[] } | null>(null)
+  const [validationResult, setValidationResult] = useState<ValidationResult | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
-  // Form state for basic info
-  const [name, setName] = useState('')
-  const [description, setDescription] = useState('')
-  const [labels, setLabels] = useState<string>('')
+  const labels = useMemo(() => labelsText.split(',').map((item) => item.trim()).filter(Boolean), [labelsText])
+  const diffRows = useMemo(() => buildDiffRows(latestVersion?.config_json ?? {}, configJson), [latestVersion, configJson])
 
-  useEffect(() => {
-    if (strategy) {
-      setName(strategy.name)
-      setDescription(strategy.description || '')
-      setLabels(strategy.labels.join(', '))
-    }
-  }, [strategy])
+  const market = asObject(configJson.market)
+  const universe = asObject(configJson.universe)
+  const position = asObject(configJson.position)
+  const risk = asObject(configJson.risk)
+  const execution = asObject(configJson.execution)
+  const backtest = asObject(configJson.backtest)
 
-  useEffect(() => {
-    if (versions && versions.length > 0) {
-      const latest = versions[0]
-      setConfigJson(latest.config_json)
-      setJsonText(JSON.stringify(latest.config_json, null, 2))
-    }
-  }, [versions])
-
-  const handleJsonChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const text = e.target.value
-    setJsonText(text)
-    try {
-      const parsed = JSON.parse(text)
-      setConfigJson(parsed)
-      setJsonError(null)
-    } catch (err: any) {
-      setJsonError(err.message)
-    }
+  const updateConfigAtPath = (path: string[], value: unknown) => {
+    setConfigJson((prev) => updateNestedConfig(prev, path, value))
   }
 
-  const updateConfig = (path: string[], value: any) => {
-    setConfigJson(prev => {
-      const newConfig = { ...prev }
-      let current = newConfig
-      for (let i = 0; i < path.length - 1; i++) {
-        if (!current[path[i]]) current[path[i]] = {}
-        current = current[path[i]]
-      }
-      current[path[path.length - 1]] = value
-      setJsonText(JSON.stringify(newConfig, null, 2))
-      return newConfig
-    })
+  const updateIntegerAtPath = (path: string[], fallback = 0) => (event: ChangeEvent<HTMLInputElement>) => {
+    updateConfigAtPath(path, parseIntegerInput(event.target.value, fallback))
   }
+
+  const updateNumberAtPath = (path: string[], fallback = 0) => (event: ChangeEvent<HTMLInputElement>) => {
+    updateConfigAtPath(path, parseNumberInput(event.target.value, fallback))
+  }
+
+  useEffect(() => {
+    setJsonText(JSON.stringify(configJson, null, 2))
+  }, [configJson])
 
   const handleValidate = async () => {
-    if (!versions?.[0]) return
+    const result = await validateDraftMutation.mutateAsync({
+      configJson: buildDraftConfig(configJson, name, description, labels, notes),
+      strict: true,
+    })
+    setValidationResult(result)
+    setTabValue(11)
+  }
+
+  const handleSave = async () => {
+    if (jsonError) return
+    setSaveError(null)
     try {
-      const result = await validateMutation.mutateAsync({
-        versionId: versions[0].id,
-        config_json: configJson
+      if (
+        strategy.name !== name
+        || (strategy.description ?? '') !== description
+        || JSON.stringify(strategy.labels) !== JSON.stringify(labels)
+      ) {
+        await updateStrategyMutation.mutateAsync({ id: strategy.id, name, description, labels })
+      }
+      const createdVersion = await createVersionMutation.mutateAsync({
+        strategyId: strategy.id,
+        data: {
+          schema_version: String(configJson.schema_version ?? latestVersion?.schema_version ?? '1.0.0'),
+          config_json: buildDraftConfig(configJson, name, description, labels, notes),
+          labels,
+          notes,
+        },
       })
-      setValidationResult(result)
-      setTabValue(9) // Switch to validation tab
-    } catch (err) {
-      console.error('Validation failed', err)
+      if (validationResult?.valid) {
+        await validateVersionMutation.mutateAsync({ versionId: createdVersion.id, strict: true })
+      }
+      onSaved()
+    } catch {
+      setSaveError('Failed to save the new strategy version.')
     }
-  }
-
-  if (isLoadingStrategy || isLoadingVersions) {
-    return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '50vh' }}>
-        <CircularProgress />
-      </Box>
-    )
-  }
-
-  if (!strategy) {
-    return <Typography>Strategy not found</Typography>
   }
 
   return (
     <Box sx={{ height: 'calc(100vh - 100px)', display: 'flex', flexDirection: 'column' }}>
-      {/* Header */}
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 2, gap: 2, flexShrink: 0 }}>
-        <IconButton onClick={() => navigate(`/strategies/${strategy.id}`)} sx={{ color: 'text.secondary' }}>
+        <IconButton onClick={onBack} sx={{ color: 'text.secondary' }}>
           <ArrowLeft size={20} />
         </IconButton>
         <Box sx={{ flexGrow: 1 }}>
           <Typography variant="h5">Edit Strategy: {strategy.name}</Typography>
           <Typography variant="body2" color="text.tertiary">
-            Editing based on v{versions?.[0]?.version_no || 1}
+            Saving creates a new version from v{latestVersion?.version_no || 1}.
           </Typography>
         </Box>
-        <Button 
-          variant="outlined" 
-          onClick={handleValidate}
-          disabled={!!jsonError || validateMutation.isPending}
-        >
-          {validateMutation.isPending ? 'Validating...' : 'Validate'}
+        <Button variant="outlined" onClick={handleValidate} disabled={!!jsonError || validateDraftMutation.isPending}>
+          {validateDraftMutation.isPending ? 'Validating...' : 'Validate Draft'}
         </Button>
       </Box>
 
-      {/* Main Editor Area */}
+      {saveError ? <Alert severity="error" sx={{ mb: 2 }}>{saveError}</Alert> : null}
+
       <Card sx={{ flexGrow: 1, display: 'flex', flexDirection: 'row', overflow: 'hidden' }}>
         <Tabs
           orientation="vertical"
-          variant="scrollable"
           value={tabValue}
-          onChange={(_, newValue) => setTabValue(newValue)}
-          sx={{ 
-            borderRight: 1, 
-            borderColor: 'divider',
-            minWidth: 200,
-            bgcolor: 'bg.surface2',
-            '& .MuiTab-root': { alignItems: 'flex-start', textAlign: 'left', px: 3 }
-          }}
+          onChange={(_, next) => setTabValue(next)}
+          variant="scrollable"
+          sx={{ minWidth: 220, borderRight: 1, borderColor: 'divider', bgcolor: 'bg.surface2' }}
         >
-          <Tab label="Basic Info" />
+          <Tab label="Basic" />
           <Tab label="Market & Universe" />
           <Tab label="Entry" />
+          <Tab label="Reentry" />
           <Tab label="Position" />
           <Tab label="Exit" />
           <Tab label="Risk" />
           <Tab label="Execution" />
           <Tab label="Backtest" />
+          <Tab label={`Diff Preview (${diffRows.length})`} />
           <Tab label="JSON Editor" />
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                Validation
-                {validationResult && (
-                  validationResult.is_valid ? 
-                    <CheckCircle2 size={14} color="var(--mui-palette-status-success)" /> : 
-                    <AlertCircle size={14} color="var(--mui-palette-status-danger)" />
-                )}
-              </Box>
-            } 
-          />
+          <Tab label={validationResult?.valid ? 'Validation ✓' : 'Validation'} />
         </Tabs>
 
         <Box sx={{ flexGrow: 1, overflow: 'hidden' }}>
           <TabPanel value={tabValue} index={0}>
-            <Stack spacing={3} maxWidth={600}>
-              <TextField 
-                label="Strategy Name" 
-                value={name} 
-                onChange={(e) => setName(e.target.value)} 
-                fullWidth 
-              />
-              <TextField 
-                label="Description" 
-                value={description} 
-                onChange={(e) => setDescription(e.target.value)} 
-                multiline 
-                rows={3} 
-                fullWidth 
-              />
-              <TextField 
-                label="Labels (comma separated)" 
-                value={labels} 
-                onChange={(e) => setLabels(e.target.value)} 
-                fullWidth 
-                helperText="e.g. momentum, crypto, high-risk"
-              />
-              <TextField 
-                label="Strategy Type" 
-                value={strategy.strategy_type.toUpperCase()} 
-                disabled 
-                fullWidth 
-              />
+            <Stack spacing={3} maxWidth={760}>
+              <TextField label="Strategy Name" value={name} onChange={(event) => setName(event.target.value)} fullWidth />
+              <TextField label="Description" value={description} onChange={(event) => setDescription(event.target.value)} multiline rows={3} fullWidth />
+              <TextField label="Labels (comma separated)" value={labelsText} onChange={(event) => setLabelsText(event.target.value)} fullWidth />
+              <TextField label="Version Notes" value={notes} onChange={(event) => setNotes(event.target.value)} multiline rows={3} fullWidth />
+              <TextField label="Strategy Type" value={strategy.strategy_type.toUpperCase()} disabled fullWidth />
             </Stack>
           </TabPanel>
 
           <TabPanel value={tabValue} index={1}>
-            <Typography variant="h6" mb={3}>Market Configuration</Typography>
-            <Grid container spacing={3} maxWidth={800}>
+            <Grid container spacing={3} maxWidth={840}>
               <Grid item xs={12} sm={6}>
                 <FormControl fullWidth>
                   <InputLabel>Exchange</InputLabel>
-                  <Select
-                    value={configJson.market?.exchange || 'UPBIT'}
-                    label="Exchange"
-                    onChange={(e) => updateConfig(['market', 'exchange'], e.target.value)}
-                  >
+                  <Select value={String(market.exchange ?? 'UPBIT')} label="Exchange" onChange={(event) => updateConfigAtPath(['market', 'exchange'], event.target.value)}>
                     <MenuItem value="UPBIT">Upbit</MenuItem>
-                    <MenuItem value="BINANCE">Binance</MenuItem>
                   </Select>
                 </FormControl>
               </Grid>
               <Grid item xs={12} sm={6}>
                 <FormControl fullWidth>
                   <InputLabel>Trade Basis</InputLabel>
-                  <Select
-                    value={configJson.market?.trade_basis || 'candle'}
-                    label="Trade Basis"
-                    onChange={(e) => updateConfig(['market', 'trade_basis'], e.target.value)}
-                  >
+                  <Select value={String(market.trade_basis ?? 'candle')} label="Trade Basis" onChange={(event) => updateConfigAtPath(['market', 'trade_basis'], event.target.value)}>
                     <MenuItem value="candle">Candle</MenuItem>
                     <MenuItem value="tick">Tick</MenuItem>
                     <MenuItem value="hybrid">Hybrid</MenuItem>
@@ -262,274 +301,116 @@ export default function StrategyEditPage() {
                 </FormControl>
               </Grid>
               <Grid item xs={12}>
-                <TextField 
-                  label="Timeframes (comma separated)" 
-                  value={(configJson.market?.timeframes || []).join(', ')}
-                  onChange={(e) => updateConfig(['market', 'timeframes'], e.target.value.split(',').map(s => s.trim()))}
-                  fullWidth 
-                  helperText="e.g. 1m, 5m, 1h, 1d"
+                <TextField
+                  label="Timeframes"
+                  value={asArray(market.timeframes).join(', ')}
+                  onChange={(event) => updateConfigAtPath(
+                    ['market', 'timeframes'],
+                    event.target.value.split(',').map((item) => item.trim()).filter(Boolean),
+                  )}
+                  fullWidth
                 />
               </Grid>
-            </Grid>
-
-            <Divider sx={{ my: 4 }} />
-            
-            <Typography variant="h6" mb={3}>Universe Configuration</Typography>
-            <Grid container spacing={3} maxWidth={800}>
               <Grid item xs={12} sm={6}>
                 <FormControl fullWidth>
-                  <InputLabel>Mode</InputLabel>
-                  <Select
-                    value={configJson.universe?.mode || 'dynamic'}
-                    label="Mode"
-                    onChange={(e) => updateConfig(['universe', 'mode'], e.target.value)}
-                  >
+                  <InputLabel>Universe Mode</InputLabel>
+                  <Select value={String(universe.mode ?? 'dynamic')} label="Universe Mode" onChange={(event) => updateConfigAtPath(['universe', 'mode'], event.target.value)}>
                     <MenuItem value="dynamic">Dynamic</MenuItem>
                     <MenuItem value="static">Static</MenuItem>
                   </Select>
                 </FormControl>
               </Grid>
               <Grid item xs={12} sm={6}>
-                <TextField 
-                  label="Max Symbols" 
+                <TextField
+                  label="Max Symbols"
                   type="number"
-                  value={configJson.universe?.max_symbols || 10}
-                  onChange={(e) => updateConfig(['universe', 'max_symbols'], parseInt(e.target.value))}
-                  fullWidth 
+                  value={asNumber(universe.max_symbols, 10)}
+                  onChange={updateIntegerAtPath(['universe', 'max_symbols'], 10)}
+                  fullWidth
                 />
               </Grid>
             </Grid>
           </TabPanel>
 
           <TabPanel value={tabValue} index={2}>
-            <Typography variant="h6" mb={2}>Entry Conditions</Typography>
-            <Alert severity="info" sx={{ mb: 3 }}>
-              For MVP, please edit entry conditions directly in JSON format.
-            </Alert>
-            <TextField
-              multiline
-              fullWidth
-              rows={15}
-              value={JSON.stringify(configJson.entry || {}, null, 2)}
-              onChange={(e) => {
-                try {
-                  const parsed = JSON.parse(e.target.value)
-                  updateConfig(['entry'], parsed)
-                } catch (err) {
-                  // Ignore parse errors while typing
-                }
-              }}
-              sx={{ fontFamily: 'monospace' }}
-            />
+            <JsonSection label="Entry JSON" value={asObject(configJson.entry)} onChange={(next) => setConfigJson((prev) => updateNestedConfig(prev, ['entry'], next))} />
           </TabPanel>
 
           <TabPanel value={tabValue} index={3}>
-            <Typography variant="h6" mb={3}>Position Sizing</Typography>
-            <Grid container spacing={3} maxWidth={800}>
-              <Grid item xs={12} sm={6}>
-                <FormControl fullWidth>
-                  <InputLabel>Size Mode</InputLabel>
-                  <Select
-                    value={configJson.position?.size_mode || 'fixed_percent'}
-                    label="Size Mode"
-                    onChange={(e) => updateConfig(['position', 'size_mode'], e.target.value)}
-                  >
-                    <MenuItem value="fixed_amount">Fixed Amount</MenuItem>
-                    <MenuItem value="fixed_percent">Fixed Percent</MenuItem>
-                    <MenuItem value="fractional_kelly">Fractional Kelly</MenuItem>
-                    <MenuItem value="risk_per_trade">Risk Per Trade</MenuItem>
-                  </Select>
-                </FormControl>
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField 
-                  label="Size Value" 
-                  type="number"
-                  value={configJson.position?.size_value || 0}
-                  onChange={(e) => updateConfig(['position', 'size_value'], parseFloat(e.target.value))}
-                  fullWidth 
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField 
-                  label="Max Open Positions Per Symbol" 
-                  type="number"
-                  value={configJson.position?.max_open_positions_per_symbol || 1}
-                  onChange={(e) => updateConfig(['position', 'max_open_positions_per_symbol'], parseInt(e.target.value))}
-                  fullWidth 
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField 
-                  label="Max Concurrent Positions" 
-                  type="number"
-                  value={configJson.position?.max_concurrent_positions || 5}
-                  onChange={(e) => updateConfig(['position', 'max_concurrent_positions'], parseInt(e.target.value))}
-                  fullWidth 
-                />
-              </Grid>
-              <Grid item xs={12}>
-                <FormControlLabel
-                  control={
-                    <Switch 
-                      checked={configJson.position?.allow_scale_in || false}
-                      onChange={(e) => updateConfig(['position', 'allow_scale_in'], e.target.checked)}
-                    />
-                  }
-                  label="Allow Scale In"
-                />
-              </Grid>
-            </Grid>
+            <JsonSection label="Reentry JSON" value={asObject(configJson.reentry)} onChange={(next) => setConfigJson((prev) => updateNestedConfig(prev, ['reentry'], next))} />
           </TabPanel>
 
           <TabPanel value={tabValue} index={4}>
-            <Typography variant="h6" mb={3}>Exit Conditions</Typography>
-            <Grid container spacing={3} maxWidth={800}>
+            <Grid container spacing={3} maxWidth={840}>
               <Grid item xs={12} sm={6}>
-                <TextField 
-                  label="Stop Loss %" 
+                <TextField
+                  label="Max Open Positions Per Symbol"
                   type="number"
-                  value={configJson.exit?.stop_loss_pct || ''}
-                  onChange={(e) => updateConfig(['exit', 'stop_loss_pct'], parseFloat(e.target.value))}
-                  fullWidth 
+                  value={asNumber(position.max_open_positions_per_symbol, 1)}
+                  onChange={updateIntegerAtPath(['position', 'max_open_positions_per_symbol'], 1)}
+                  fullWidth
                 />
               </Grid>
               <Grid item xs={12} sm={6}>
-                <TextField 
-                  label="Take Profit %" 
+                <TextField
+                  label="Max Concurrent Positions"
                   type="number"
-                  value={configJson.exit?.take_profit_pct || ''}
-                  onChange={(e) => updateConfig(['exit', 'take_profit_pct'], parseFloat(e.target.value))}
-                  fullWidth 
+                  value={asNumber(position.max_concurrent_positions, 4)}
+                  onChange={updateIntegerAtPath(['position', 'max_concurrent_positions'], 4)}
+                  fullWidth
                 />
               </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField 
-                  label="Trailing Stop %" 
-                  type="number"
-                  value={configJson.exit?.trailing_stop_pct || ''}
-                  onChange={(e) => updateConfig(['exit', 'trailing_stop_pct'], parseFloat(e.target.value))}
-                  fullWidth 
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField 
-                  label="Time Stop (Bars)" 
-                  type="number"
-                  value={configJson.exit?.time_stop_bars || ''}
-                  onChange={(e) => updateConfig(['exit', 'time_stop_bars'], parseInt(e.target.value))}
-                  fullWidth 
-                />
+              <Grid item xs={12}>
+                <FormControlLabel control={<Switch checked={Boolean(position.allow_scale_in)} onChange={(event) => updateConfigAtPath(['position', 'allow_scale_in'], event.target.checked)} />} label="Allow scale in" />
               </Grid>
             </Grid>
           </TabPanel>
 
           <TabPanel value={tabValue} index={5}>
-            <Typography variant="h6" mb={3}>Risk Management</Typography>
-            <Grid container spacing={3} maxWidth={800}>
+            <JsonSection label="Exit JSON" value={asObject(configJson.exit)} onChange={(next) => setConfigJson((prev) => updateNestedConfig(prev, ['exit'], next))} />
+          </TabPanel>
+
+          <TabPanel value={tabValue} index={6}>
+            <Grid container spacing={3} maxWidth={840}>
               <Grid item xs={12} sm={6}>
-                <TextField 
-                  label="Daily Loss Limit %" 
+                <TextField
+                  label="Daily Loss Limit %"
                   type="number"
-                  value={configJson.risk?.daily_loss_limit_pct || 0}
-                  onChange={(e) => updateConfig(['risk', 'daily_loss_limit_pct'], parseFloat(e.target.value))}
-                  fullWidth 
+                  value={asNumber(risk.daily_loss_limit_pct, 0)}
+                  onChange={updateNumberAtPath(['risk', 'daily_loss_limit_pct'])}
+                  fullWidth
                 />
               </Grid>
               <Grid item xs={12} sm={6}>
-                <TextField 
-                  label="Max Strategy Drawdown %" 
+                <TextField
+                  label="Max Strategy Drawdown %"
                   type="number"
-                  value={configJson.risk?.max_strategy_drawdown_pct || 0}
-                  onChange={(e) => updateConfig(['risk', 'max_strategy_drawdown_pct'], parseFloat(e.target.value))}
-                  fullWidth 
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField 
-                  label="Max Order Retries" 
-                  type="number"
-                  value={configJson.risk?.max_order_retries || 3}
-                  onChange={(e) => updateConfig(['risk', 'max_order_retries'], parseInt(e.target.value))}
-                  fullWidth 
+                  value={asNumber(risk.max_strategy_drawdown_pct, 0)}
+                  onChange={updateNumberAtPath(['risk', 'max_strategy_drawdown_pct'])}
+                  fullWidth
                 />
               </Grid>
               <Grid item xs={12}>
-                <Stack spacing={2}>
-                  <FormControlLabel
-                    control={
-                      <Switch 
-                        checked={configJson.risk?.prevent_duplicate_entry || false}
-                        onChange={(e) => updateConfig(['risk', 'prevent_duplicate_entry'], e.target.checked)}
-                      />
-                    }
-                    label="Prevent Duplicate Entry"
-                  />
-                  <FormControlLabel
-                    control={
-                      <Switch 
-                        checked={configJson.risk?.kill_switch_enabled || false}
-                        onChange={(e) => updateConfig(['risk', 'kill_switch_enabled'], e.target.checked)}
-                      />
-                    }
-                    label="Enable Kill Switch"
-                  />
-                </Stack>
+                <FormControlLabel control={<Switch checked={Boolean(risk.kill_switch_enabled)} onChange={(event) => updateConfigAtPath(['risk', 'kill_switch_enabled'], event.target.checked)} />} label="Enable kill switch" />
               </Grid>
             </Grid>
           </TabPanel>
 
-          <TabPanel value={tabValue} index={6}>
-            <Typography variant="h6" mb={3}>Execution Settings</Typography>
-            <Grid container spacing={3} maxWidth={800}>
+          <TabPanel value={tabValue} index={7}>
+            <Grid container spacing={3} maxWidth={840}>
               <Grid item xs={12} sm={6}>
                 <FormControl fullWidth>
                   <InputLabel>Entry Order Type</InputLabel>
-                  <Select
-                    value={configJson.execution?.entry_order_type || 'market'}
-                    label="Entry Order Type"
-                    onChange={(e) => updateConfig(['execution', 'entry_order_type'], e.target.value)}
-                  >
+                  <Select value={String(execution.entry_order_type ?? 'market')} label="Entry Order Type" onChange={(event) => updateConfigAtPath(['execution', 'entry_order_type'], event.target.value)}>
                     <MenuItem value="market">Market</MenuItem>
                     <MenuItem value="limit">Limit</MenuItem>
-                  </Select>
-                </FormControl>
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <FormControl fullWidth>
-                  <InputLabel>Exit Order Type</InputLabel>
-                  <Select
-                    value={configJson.execution?.exit_order_type || 'market'}
-                    label="Exit Order Type"
-                    onChange={(e) => updateConfig(['execution', 'exit_order_type'], e.target.value)}
-                  >
-                    <MenuItem value="market">Market</MenuItem>
-                    <MenuItem value="limit">Limit</MenuItem>
-                  </Select>
-                </FormControl>
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <FormControl fullWidth>
-                  <InputLabel>Slippage Model</InputLabel>
-                  <Select
-                    value={configJson.execution?.slippage_model || 'fixed_bps'}
-                    label="Slippage Model"
-                    onChange={(e) => updateConfig(['execution', 'slippage_model'], e.target.value)}
-                  >
-                    <MenuItem value="none">None</MenuItem>
-                    <MenuItem value="fixed_bps">Fixed BPS</MenuItem>
-                    <MenuItem value="volatility_scaled">Volatility Scaled</MenuItem>
                   </Select>
                 </FormControl>
               </Grid>
               <Grid item xs={12} sm={6}>
                 <FormControl fullWidth>
                   <InputLabel>Fee Model</InputLabel>
-                  <Select
-                    value={configJson.execution?.fee_model || 'per_fill'}
-                    label="Fee Model"
-                    onChange={(e) => updateConfig(['execution', 'fee_model'], e.target.value)}
-                  >
+                  <Select value={String(execution.fee_model ?? 'per_fill')} label="Fee Model" onChange={(event) => updateConfigAtPath(['execution', 'fee_model'], event.target.value)}>
                     <MenuItem value="per_fill">Per Fill</MenuItem>
                     <MenuItem value="per_order">Per Order</MenuItem>
                   </Select>
@@ -538,156 +419,127 @@ export default function StrategyEditPage() {
             </Grid>
           </TabPanel>
 
-          <TabPanel value={tabValue} index={7}>
-            <Typography variant="h6" mb={3}>Backtest Assumptions</Typography>
-            <Grid container spacing={3} maxWidth={800}>
+          <TabPanel value={tabValue} index={8}>
+            <Grid container spacing={3} maxWidth={840}>
               <Grid item xs={12} sm={6}>
-                <TextField 
-                  label="Initial Capital" 
+                <TextField
+                  label="Initial Capital"
                   type="number"
-                  value={configJson.backtest?.initial_capital || 10000000}
-                  onChange={(e) => updateConfig(['backtest', 'initial_capital'], parseFloat(e.target.value))}
-                  fullWidth 
+                  value={asNumber(backtest.initial_capital, 10000000)}
+                  onChange={updateNumberAtPath(['backtest', 'initial_capital'], 10000000)}
+                  fullWidth
                 />
               </Grid>
               <Grid item xs={12} sm={6}>
-                <TextField 
-                  label="Fee (BPS)" 
+                <TextField
+                  label="Fee (BPS)"
                   type="number"
-                  value={configJson.backtest?.fee_bps || 5}
-                  onChange={(e) => updateConfig(['backtest', 'fee_bps'], parseFloat(e.target.value))}
-                  fullWidth 
+                  value={asNumber(backtest.fee_bps, 5)}
+                  onChange={updateNumberAtPath(['backtest', 'fee_bps'], 5)}
+                  fullWidth
                 />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField 
-                  label="Slippage (BPS)" 
-                  type="number"
-                  value={configJson.backtest?.slippage_bps || 10}
-                  onChange={(e) => updateConfig(['backtest', 'slippage_bps'], parseFloat(e.target.value))}
-                  fullWidth 
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField 
-                  label="Latency (ms)" 
-                  type="number"
-                  value={configJson.backtest?.latency_ms || 50}
-                  onChange={(e) => updateConfig(['backtest', 'latency_ms'], parseInt(e.target.value))}
-                  fullWidth 
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <FormControl fullWidth>
-                  <InputLabel>Fill Assumption</InputLabel>
-                  <Select
-                    value={configJson.backtest?.fill_assumption || 'next_bar_open'}
-                    label="Fill Assumption"
-                    onChange={(e) => updateConfig(['backtest', 'fill_assumption'], e.target.value)}
-                  >
-                    <MenuItem value="best_bid_ask">Best Bid/Ask</MenuItem>
-                    <MenuItem value="mid">Mid Price</MenuItem>
-                    <MenuItem value="next_tick">Next Tick</MenuItem>
-                    <MenuItem value="next_bar_open">Next Bar Open</MenuItem>
-                  </Select>
-                </FormControl>
               </Grid>
             </Grid>
           </TabPanel>
 
-          <TabPanel value={tabValue} index={8}>
-            <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-              <Typography variant="h6" mb={2}>Raw JSON Editor</Typography>
-              {jsonError && (
-                <Alert severity="error" sx={{ mb: 2 }}>
-                  Invalid JSON: {jsonError}
-                </Alert>
-              )}
-              <TextField
-                multiline
-                fullWidth
-                value={jsonText}
-                onChange={handleJsonChange}
-                error={!!jsonError}
-                sx={{ 
-                  flexGrow: 1,
-                  '& .MuiInputBase-root': { height: '100%', alignItems: 'flex-start' },
-                  '& textarea': { fontFamily: 'monospace', fontSize: 13, height: '100% !important' }
-                }}
-              />
-            </Box>
+          <TabPanel value={tabValue} index={9}>
+            <Stack spacing={2}>
+              <Typography variant="h6">Diff Preview</Typography>
+              <Typography variant="body2" color="text.secondary">{diffRows.length === 0 ? 'No changes detected.' : `${diffRows.length} changed fields`}</Typography>
+              {diffRows.map((row) => (
+                <Card key={row.path} variant="outlined">
+                  <Box sx={{ p: 2 }}>
+                    <Typography variant="subtitle2" fontFamily="monospace">{row.path}</Typography>
+                    <Grid container spacing={2} sx={{ mt: 0.5 }}>
+                      <Grid item xs={12} md={6}>
+                        <Typography variant="caption" color="text.secondary">Before</Typography>
+                        <Box sx={{ mt: 0.5, p: 1.5, borderRadius: 1, bgcolor: 'bg.surface2', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>{JSON.stringify(row.before, null, 2)}</Box>
+                      </Grid>
+                      <Grid item xs={12} md={6}>
+                        <Typography variant="caption" color="text.secondary">After</Typography>
+                        <Box sx={{ mt: 0.5, p: 1.5, borderRadius: 1, bgcolor: 'rgba(34, 231, 107, 0.05)', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>{JSON.stringify(row.after, null, 2)}</Box>
+                      </Grid>
+                    </Grid>
+                  </Box>
+                </Card>
+              ))}
+            </Stack>
           </TabPanel>
 
-          <TabPanel value={tabValue} index={9}>
-            <Typography variant="h6" mb={3}>Validation Results</Typography>
+          <TabPanel value={tabValue} index={10}>
+            {jsonError ? <Alert severity="error" sx={{ mb: 2 }}>Invalid JSON: {jsonError}</Alert> : null}
+            <TextField
+              multiline
+              fullWidth
+              value={jsonText}
+              onChange={(event) => {
+                setJsonText(event.target.value)
+                try {
+                  const parsed = JSON.parse(event.target.value) as JsonObject
+                  setConfigJson(parsed)
+                  setJsonError(null)
+                } catch (error) {
+                  setJsonError(error instanceof Error ? error.message : 'Invalid JSON')
+                }
+              }}
+              sx={{ '& .MuiInputBase-root': { minHeight: 520, alignItems: 'flex-start' }, '& textarea': { fontFamily: 'monospace', minHeight: '520px !important' } }}
+            />
+          </TabPanel>
+
+          <TabPanel value={tabValue} index={11}>
             {!validationResult ? (
-              <Typography color="text.secondary">
-                Click "Validate" in the header to check your configuration against the schema.
-              </Typography>
+              <Typography color="text.secondary">Validate the current draft to see errors and warnings before saving.</Typography>
             ) : (
               <Stack spacing={3}>
-                <Alert severity={validationResult.is_valid ? "success" : "error"}>
-                  {validationResult.is_valid ? "Configuration is valid." : "Configuration has errors."}
+                <Alert severity={validationResult.valid ? 'success' : 'error'}>
+                  {validationResult.valid ? 'Draft configuration is valid.' : 'Draft configuration has validation errors.'}
                 </Alert>
-                
-                {validationResult.errors.length > 0 && (
-                  <Box>
-                    <Typography variant="subtitle1" color="error" mb={1}>Errors ({validationResult.errors.length})</Typography>
-                    <Stack spacing={1}>
-                      {validationResult.errors.map((err, i) => (
-                        <Alert key={i} severity="error" variant="outlined" sx={{ py: 0 }}>{err}</Alert>
-                      ))}
-                    </Stack>
-                  </Box>
-                )}
-
-                {validationResult.warnings.length > 0 && (
-                  <Box>
-                    <Typography variant="subtitle1" color="warning.main" mb={1}>Warnings ({validationResult.warnings.length})</Typography>
-                    <Stack spacing={1}>
-                      {validationResult.warnings.map((warn, i) => (
-                        <Alert key={i} severity="warning" variant="outlined" sx={{ py: 0 }}>{warn}</Alert>
-                      ))}
-                    </Stack>
-                  </Box>
-                )}
+                {validationResult.errors.map((issue, index) => (
+                  <Alert key={`${issue.code}-${index}`} severity="error" variant="outlined">[{issue.code}] {issue.message}</Alert>
+                ))}
+                {validationResult.warnings.map((issue, index) => (
+                  <Alert key={`${issue.code}-${index}`} severity="warning" variant="outlined">[{issue.code}] {issue.message}</Alert>
+                ))}
               </Stack>
             )}
           </TabPanel>
         </Box>
       </Card>
 
-      {/* Bottom Action Bar */}
-      <Box 
-        sx={{ 
-          mt: 2, 
-          p: 2, 
-          bgcolor: 'bg.surface1', 
-          border: '1px solid', 
-          borderColor: 'border.default',
-          borderRadius: 2,
-          display: 'flex',
-          justifyContent: 'flex-end',
-          gap: 2,
-          flexShrink: 0
-        }}
-      >
-        <Button 
-          variant="outlined" 
-          startIcon={<X size={16} />}
-          onClick={() => navigate(`/strategies/${strategy.id}`)}
-        >
-          Discard Changes
-        </Button>
-        <Button 
-          variant="contained" 
-          color="primary" 
-          startIcon={<Save size={16} />}
-          disabled={!!jsonError}
-        >
-          Save as New Version
-        </Button>
+      <Box sx={{ mt: 2, p: 2, border: '1px solid', borderColor: 'border.default', borderRadius: 2, display: 'flex', justifyContent: 'space-between', gap: 2 }}>
+        <Typography variant="body2" color="text.secondary">Form + JSON stay in sync, and saving preserves the old version.</Typography>
+        <Stack direction="row" spacing={2}>
+          <Button variant="outlined" startIcon={<X size={16} />} onClick={onBack}>Discard</Button>
+          <Button variant="contained" startIcon={<Save size={16} />} disabled={!!jsonError || createVersionMutation.isPending || updateStrategyMutation.isPending} onClick={handleSave}>
+            {createVersionMutation.isPending || updateStrategyMutation.isPending ? 'Saving...' : 'Save as New Version'}
+          </Button>
+        </Stack>
       </Box>
     </Box>
+  )
+}
+
+export default function StrategyEditPage() {
+  const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
+  const { data: strategy, isLoading: isLoadingStrategy } = useStrategy(id ?? '')
+  const { data: versions, isLoading: isLoadingVersions } = useStrategyVersions(id ?? '')
+
+  if (isLoadingStrategy || isLoadingVersions) {
+    return <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '50vh' }}><CircularProgress /></Box>
+  }
+
+  if (!strategy) {
+    return <Typography>Strategy not found</Typography>
+  }
+
+  return (
+    <StrategyEditForm
+      key={`${strategy.id}:${versions?.[0]?.id ?? 'none'}`}
+      strategy={strategy}
+      versions={versions ?? []}
+      onBack={() => navigate(`/strategies/${strategy.id}`)}
+      onSaved={() => navigate(`/strategies/${strategy.id}`)}
+    />
   )
 }

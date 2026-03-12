@@ -38,8 +38,19 @@ export function useRunBacktest() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: async (data: Partial<BacktestRun>) => {
-      const response = await apiClient.post<unknown, ApiResponse<BacktestRun>>('/backtests', data)
-      return response.data
+      const response = await apiClient.post<unknown, ApiResponse<{
+        run_id: string
+        status: string
+        strategy_version_id: string
+        symbols: string[]
+        date_from: string
+        date_to: string
+        queued_at: string
+      }>>('/backtests/run', data)
+      return {
+        id: response.data.run_id,
+        status: response.data.status,
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: backtestKeys.lists() })

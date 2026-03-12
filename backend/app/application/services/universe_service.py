@@ -12,9 +12,9 @@ class UniverseService:
         return [
             {
                 "symbol": str(item.get("symbol", "KRW-BTC")),
-                "turnover_24h_krw": 152300000000,
-                "surge_score": 0.93,
-                "selected": True,
+                "turnover_24h_krw": item.get("turnover_24h_krw", 152300000000),
+                "surge_score": item.get("surge_score", 0.93),
+                "selected": bool(item.get("selected", True)),
                 "active_compare_session_count": 0,
                 "has_open_position": False,
                 "has_recent_signal": False,

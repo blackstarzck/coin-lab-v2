@@ -1,23 +1,22 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TypeVar
 
+from ...domain.seed_data import default_seed_data
 from ...domain.entities.session import (
     BacktestRun,
     BacktestTrade,
-    ExecutionMode,
     LogEntry,
     Order,
-    OrderState,
     Position,
-    PositionState,
     RiskEvent,
     Session,
     SessionStatus,
     Signal,
 )
-from ...domain.entities.strategy import Strategy, StrategyType, StrategyVersion
+from ...domain.entities.strategy import Strategy, StrategyVersion
 from .lab_store import LabStore
 
 
@@ -45,138 +44,17 @@ class InMemoryLabStore(LabStore):
     def seed_defaults(self) -> None:
         if self._strategies:
             return
-        now = _now()
-        base_config = {
-            "type": "dsl",
-            "schema_version": "1.0.0",
-            "market": {
-                "exchange": "UPBIT",
-                "market_types": ["KRW"],
-                "timeframes": ["5m", "15m"],
-                "trade_basis": "candle",
-            },
-            "universe": {
-                "mode": "dynamic",
-                "sources": ["top_turnover", "watchlist"],
-                "max_symbols": 10,
-                "refresh_sec": 60,
-                "filters": {"min_24h_turnover_krw": 1000000000, "exclude_symbols": []},
-            },
-            "entry": {"logic": "all", "conditions": []},
-            "reentry": {"enabled": False, "cooldown_sec": 0, "max_reentries": 0},
-            "position": {
-                "max_open_positions_per_symbol": 1,
-                "allow_scale_in": False,
-                "size_mode": "fixed_percent",
-                "size_value": 0.1,
-                "size_caps": {"min_pct": 0.02, "max_pct": 0.1},
-                "max_concurrent_positions": 4,
-            },
-            "exit": {"stop_loss_pct": 0.015, "take_profit_pct": 0.03},
-            "risk": {
-                "daily_loss_limit_pct": 0.03,
-                "max_strategy_drawdown_pct": 0.1,
-                "prevent_duplicate_entry": True,
-                "max_order_retries": 2,
-                "kill_switch_enabled": True,
-            },
-            "execution": {
-                "entry_order_type": "limit",
-                "exit_order_type": "limit",
-                "limit_timeout_sec": 15,
-                "fallback_to_market": True,
-                "slippage_model": "fixed_bps",
-                "fee_model": "per_fill",
-            },
-            "backtest": {
-                "initial_capital": 1000000,
-                "fee_bps": 5,
-                "slippage_bps": 3,
-                "latency_ms": 200,
-                "fill_assumption": "next_bar_open",
-            },
-        }
-        self.create_strategy(
-            Strategy(
-                id="stg_001",
-                strategy_key="btc_breakout",
-                name="BTC Breakout",
-                strategy_type=StrategyType.DSL,
-                description="EMA + breakout strategy",
-                is_active=True,
-                latest_version_id="stv_001",
-                latest_version_no=1,
-                labels=["trend", "breakout"],
-                last_7d_return_pct=4.21,
-                last_7d_win_rate=58.33,
-                created_at=now,
-                updated_at=now,
-            )
-        )
-        self.create_strategy_version(
-            StrategyVersion(
-                id="stv_001",
-                strategy_id="stg_001",
-                version_no=1,
-                schema_version="1.0.0",
-                config_json={**base_config, "id": "btc_breakout_v1", "name": "BTC Breakout V1", "labels": ["trend", "breakout"], "notes": ""},
-                config_hash="sha256:seed001",
-                labels=["trend", "breakout"],
-                notes="Seed version",
-                is_validated=True,
-                validation_summary={"valid": True, "errors": [], "warnings": []},
-                created_by="system",
-                created_at=now,
-            )
-        )
-        self.create_strategy(
-            Strategy(
-                id="stg_002",
-                strategy_key="eth_momentum",
-                name="ETH Momentum",
-                strategy_type=StrategyType.DSL,
-                description="Momentum continuation strategy",
-                is_active=True,
-                latest_version_id="stv_002",
-                latest_version_no=1,
-                labels=["momentum"],
-                last_7d_return_pct=3.12,
-                last_7d_win_rate=54.20,
-                created_at=now,
-                updated_at=now,
-            )
-        )
-        self.create_strategy_version(
-            StrategyVersion(
-                id="stv_002",
-                strategy_id="stg_002",
-                version_no=1,
-                schema_version="1.0.0",
-                config_json={**base_config, "id": "eth_momentum_v1", "name": "ETH Momentum V1", "labels": ["momentum"], "notes": ""},
-                config_hash="sha256:seed002",
-                labels=["momentum"],
-                notes="Seed version",
-                is_validated=True,
-                validation_summary={"valid": True, "errors": [], "warnings": []},
-                created_by="system",
-                created_at=now,
-            )
-        )
-        self.update_universe(["KRW-BTC", "KRW-ETH", "KRW-SOL"])
-        self.append_log(
-            LogEntry(
-                id="log_001",
-                channel="strategy-execution",
-                level="INFO",
-                session_id=None,
-                strategy_version_id="stv_001",
-                symbol="KRW-BTC",
-                event_type="SIGNAL_EMITTED",
-                message="Entry signal emitted",
-                payload={"snapshot_key": "KRW-BTC|5m|2026-03-10T03:05:00Z", "reason_codes": ["EMA_BULLISH", "HH20_BREAKOUT"]},
-                logged_at=now,
-            )
-        )
+        seed_data = default_seed_data(_now())
+        for bundle in seed_data.strategy_bundles:
+            strategy = replace(bundle.strategy, latest_version_id=None, latest_version_no=None)
+            self.create_strategy(strategy)
+            self.create_strategy_version(bundle.version)
+            strategy.latest_version_id = bundle.version.id
+            strategy.latest_version_no = bundle.version.version_no
+            self.update_strategy(strategy)
+        self._universe = [dict(item) for item in seed_data.universe_symbols]
+        for log in seed_data.logs:
+            self.append_log(log)
 
     def create_strategy(self, strategy: Strategy) -> Strategy:
         self._strategies[strategy.id] = strategy
@@ -205,12 +83,22 @@ class InMemoryLabStore(LabStore):
     def get_strategy_version_by_id(self, version_id: str) -> StrategyVersion | None:
         return self._versions.get(version_id)
 
+    def list_strategy_versions_by_ids(self, version_ids: list[str]) -> list[StrategyVersion]:
+        if not version_ids:
+            return []
+        wanted = set(version_ids)
+        return [item for item in self._versions.values() if item.id in wanted]
+
     def list_strategy_versions(self, strategy_id: str) -> list[StrategyVersion]:
         rows = [item for item in self._versions.values() if item.strategy_id == strategy_id]
         rows.sort(key=lambda item: item.version_no)
         return rows
 
     def create_session(self, session: Session) -> Session:
+        self._sessions[session.id] = session
+        return session
+
+    def update_session(self, session: Session) -> Session:
         self._sessions[session.id] = session
         return session
 
@@ -239,6 +127,14 @@ class InMemoryLabStore(LabStore):
     def list_signals_by_session(self, session_id: str) -> list[Signal]:
         return [item for item in self._signals.values() if item.session_id == session_id]
 
+    def list_signals_for_sessions(self, session_ids: list[str]) -> list[Signal]:
+        if not session_ids:
+            return []
+        wanted = set(session_ids)
+        rows = [item for item in self._signals.values() if item.session_id in wanted]
+        rows.sort(key=lambda item: item.snapshot_time, reverse=True)
+        return rows
+
     def create_position(self, position: Position) -> Position:
         self._positions[position.id] = position
         return position
@@ -248,6 +144,14 @@ class InMemoryLabStore(LabStore):
 
     def list_positions_by_session(self, session_id: str) -> list[Position]:
         return [item for item in self._positions.values() if item.session_id == session_id]
+
+    def list_positions_for_sessions(self, session_ids: list[str]) -> list[Position]:
+        if not session_ids:
+            return []
+        wanted = set(session_ids)
+        rows = [item for item in self._positions.values() if item.session_id in wanted]
+        rows.sort(key=lambda item: item.entry_time or datetime.min.replace(tzinfo=UTC), reverse=True)
+        return rows
 
     def update_position(self, position: Position) -> Position:
         self._positions[position.id] = position
@@ -291,6 +195,14 @@ class InMemoryLabStore(LabStore):
     def list_risk_events_by_session(self, session_id: str) -> list[RiskEvent]:
         return [item for item in self._risk_events.values() if item.session_id == session_id]
 
+    def list_risk_events_for_sessions(self, session_ids: list[str]) -> list[RiskEvent]:
+        if not session_ids:
+            return []
+        wanted = set(session_ids)
+        rows = [item for item in self._risk_events.values() if item.session_id in wanted]
+        rows.sort(key=lambda item: item.created_at, reverse=True)
+        return rows
+
     def append_log(self, entry: LogEntry) -> LogEntry:
         self._logs.append(entry)
         return entry
@@ -317,7 +229,15 @@ class InMemoryLabStore(LabStore):
         return [dict(item) for item in self._universe]
 
     def update_universe(self, symbols: list[str]) -> list[dict[str, object]]:
-        self._universe = [{"symbol": symbol} for symbol in symbols]
+        self._universe = [
+            {
+                "symbol": symbol,
+                "turnover_24h_krw": None,
+                "surge_score": None,
+                "selected": True,
+            }
+            for symbol in symbols
+        ]
         return self.get_current_universe()
 
     def get_strategy(self, strategy_id: str) -> Strategy | None:

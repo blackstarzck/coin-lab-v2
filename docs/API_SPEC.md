@@ -91,3 +91,4 @@
 LIVE 시작 요청 필수:
 - confirm_live=true
 - acknowledge_risk=true
+- when `COIN_LAB_LIVE_REQUIRE_ORDER_TEST=true`, `order_test_passed=true`

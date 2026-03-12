@@ -23,8 +23,10 @@ async def lifespan(app: FastAPI):
     setup_logging(settings.log_level)
     logger = get_logger("app")
     logger.info("Starting Coin Lab API...")
-    get_container()
+    container = get_container()
+    await container.runtime_service.startup()
     yield
+    await container.runtime_service.shutdown()
     logger.info("Shutting down Coin Lab API...")
 
 

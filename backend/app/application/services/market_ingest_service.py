@@ -3,6 +3,7 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from math import floor
 from typing import cast
 
 from ...core import error_codes
@@ -47,6 +48,7 @@ class MarketIngestService:
         "KRW-AVAX",
         "KRW-LINK",
     ]
+    CANDLE_TIMEFRAMES: tuple[str, ...] = ("1m", "5m", "15m", "1h")
 
     def __init__(self) -> None:
         self.connection_state: ConnectionState = ConnectionState.CONNECTED
@@ -283,6 +285,33 @@ class MarketIngestService:
         if isinstance(volume_24h, int | float):
             self._volume_24h[symbol] = float(volume_24h)
 
+        if event.event_type == EventType.TRADE_TICK and isinstance(price, int | float):
+            trade_price = float(price)
+            trade_volume = self._as_float(event.payload.get("trade_volume") or event.payload.get("volume"), 0.0)
+            for timeframe in self.CANDLE_TIMEFRAMES:
+                candle_start = self._floor_time(event.event_time, timeframe)
+                existing = self._candles.setdefault(symbol, {}).get(timeframe)
+                if existing is None or existing.candle_start != candle_start:
+                    self._candles[symbol][timeframe] = CandleState(
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        open=trade_price,
+                        high=trade_price,
+                        low=trade_price,
+                        close=trade_price,
+                        volume=trade_volume,
+                        candle_start=candle_start,
+                        is_closed=False,
+                        last_update=event.event_time,
+                    )
+                    continue
+
+                existing.high = max(existing.high, trade_price)
+                existing.low = min(existing.low, trade_price)
+                existing.close = trade_price
+                existing.volume += trade_volume
+                existing.last_update = event.event_time
+
         if event.event_type in {EventType.CANDLE_UPDATE, EventType.CANDLE_CLOSE}:
             timeframe = event.timeframe or "1m"
             open_price = self._as_float(event.payload.get("open"), self._latest_price.get(symbol, 0.0))
@@ -328,3 +357,14 @@ class MarketIngestService:
         if isinstance(value, int | float):
             return float(value)
         return fallback
+
+    def _floor_time(self, value: datetime, timeframe: str) -> datetime:
+        if timeframe.endswith("m"):
+            minutes = int(timeframe[:-1])
+            floored_minute = floor(value.minute / minutes) * minutes
+            return value.replace(minute=floored_minute, second=0, microsecond=0)
+        if timeframe.endswith("h"):
+            hours = int(timeframe[:-1])
+            floored_hour = floor(value.hour / hours) * hours
+            return value.replace(hour=floored_hour, minute=0, second=0, microsecond=0)
+        return value.replace(second=0, microsecond=0)

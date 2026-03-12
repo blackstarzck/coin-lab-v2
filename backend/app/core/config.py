@@ -4,16 +4,22 @@ import importlib
 import json
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 
-def _load_dotenv(path: str) -> None:
+def default_env_file() -> Path:
+    return Path(__file__).resolve().parents[2] / ".env"
+
+
+def _load_dotenv(path: str | os.PathLike[str] | None = None) -> None:
+    dotenv_path = Path(path).resolve() if path is not None else default_env_file()
     try:
         module = importlib.import_module("dotenv")
     except ModuleNotFoundError:
         return
     load_dotenv = getattr(module, "load_dotenv", None)
     if callable(load_dotenv):
-        load_dotenv(path)
+        load_dotenv(str(dotenv_path))
 
 
 def _parse_bool(value: str | None, default: bool) -> bool:
@@ -51,8 +57,8 @@ class Settings:
     live_order_notional_krw: int
 
 
-def load_settings() -> Settings:
-    _load_dotenv("backend/.env")
+def load_settings(env_file: str | os.PathLike[str] | None = None) -> Settings:
+    _load_dotenv(env_file)
     return Settings(
         app_env=os.getenv("COIN_LAB_APP_ENV", "development"),
         log_level=os.getenv("COIN_LAB_LOG_LEVEL", "INFO"),

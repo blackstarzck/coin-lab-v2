@@ -14,8 +14,7 @@ import {
   TableRow,
   Chip,
   Skeleton,
-  Stack,
-  useTheme
+  Stack
 } from '@mui/material'
 import { Activity, AlertTriangle, CheckCircle2, Clock, PlayCircle, XCircle } from 'lucide-react'
 import { useMonitoringSummary } from '@/features/monitoring/api'
@@ -23,7 +22,6 @@ import { formatDistanceToNow, format } from 'date-fns'
 
 export default function DashboardPage() {
   const navigate = useNavigate()
-  const theme = useTheme()
   const { data: summary, isLoading } = useMonitoringSummary()
 
   const totalRealizedPnl = useMemo(() => {
@@ -370,53 +368,56 @@ export default function DashboardPage() {
                         </TableCell>
                       </TableRow>
                     ) : (
-                      summary.recent_signals.map((signal) => (
-                        <TableRow 
-                          key={signal.id} 
-                          hover
-                          sx={{ 
-                            bgcolor: signal.blocked ? 'rgba(255, 152, 0, 0.05)' : 'transparent'
-                          }}
-                        >
-                          <TableCell sx={{ whiteSpace: 'nowrap' }}>
-                            <Typography variant="caption" color="text.secondary">
-                              {formatDistanceToNow(new Date(signal.snapshot_time), { addSuffix: true })}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="body2" fontWeight={600}>
-                              {signal.symbol}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Stack direction="row" spacing={1} alignItems="center">
-                              <Chip 
-                                label={signal.action} 
-                                size="small" 
-                                sx={{ 
-                                  fontSize: 10, 
-                                  height: 20,
-                                  bgcolor: getActionColor(signal.action) === 'default' ? 'action.disabledBackground' : `status.${getActionColor(signal.action)}`,
-                                  color: getActionColor(signal.action) === 'default' ? 'text.secondary' : 'white'
-                                }}
-                              />
-                              {signal.blocked && (
-                                <Chip label="BLOCKED" size="small" color="warning" variant="outlined" sx={{ fontSize: 10, height: 20 }} />
-                              )}
-                            </Stack>
-                          </TableCell>
-                          <TableCell align="right">
-                            <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                              {signal.signal_price.toLocaleString()}
-                            </Typography>
-                          </TableCell>
-                          <TableCell align="right">
-                            <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                              {(signal.confidence * 100).toFixed(1)}%
-                            </Typography>
-                          </TableCell>
-                        </TableRow>
-                      ))
+                      summary.recent_signals.map((signal) => {
+                        const actionColor = getActionColor(signal.action)
+                        return (
+                          <TableRow 
+                            key={signal.id} 
+                            hover
+                            sx={{ 
+                              bgcolor: signal.blocked ? 'rgba(255, 152, 0, 0.05)' : 'transparent'
+                            }}
+                          >
+                            <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                              <Typography variant="caption" color="text.secondary">
+                                {formatDistanceToNow(new Date(signal.snapshot_time), { addSuffix: true })}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="body2" fontWeight={600}>
+                                {signal.symbol}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Stack direction="row" spacing={1} alignItems="center">
+                                <Chip 
+                                  label={signal.action} 
+                                  size="small" 
+                                  sx={{ 
+                                    fontSize: 10, 
+                                    height: 20,
+                                    bgcolor: `status.${actionColor}`,
+                                    color: 'white'
+                                  }}
+                                />
+                                {signal.blocked && (
+                                  <Chip label="BLOCKED" size="small" color="warning" variant="outlined" sx={{ fontSize: 10, height: 20 }} />
+                                )}
+                              </Stack>
+                            </TableCell>
+                            <TableCell align="right">
+                              <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                                {signal.signal_price.toLocaleString()}
+                              </Typography>
+                            </TableCell>
+                            <TableCell align="right">
+                              <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                                {(signal.confidence * 100).toFixed(1)}%
+                              </Typography>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })
                     )}
                   </TableBody>
                 </Table>

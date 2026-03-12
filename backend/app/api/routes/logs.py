@@ -47,4 +47,4 @@ def document_logs(
     session_id: str | None = None,
     limit: int = Query(default=50, ge=1, le=500),
 ) -> dict[str, object]:
-    return _query_channel("documents", session_id, limit)
+    return _query_channel("document-change", session_id, limit)

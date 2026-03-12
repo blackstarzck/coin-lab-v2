@@ -103,9 +103,20 @@ class UpbitWebsocketAdapter:
         if trade_price is not None:
             payload["trade_price"] = trade_price
             payload["price"] = trade_price
+            payload["close"] = trade_price
         if trade_volume is not None:
             payload["trade_volume"] = trade_volume
             payload["volume"] = trade_volume
+
+        opening_price = self._safe_float(raw.get("opening_price") or raw.get("op"))
+        high_price = self._safe_float(raw.get("high_price") or raw.get("hp"))
+        low_price = self._safe_float(raw.get("low_price") or raw.get("lp"))
+        if opening_price is not None:
+            payload["open"] = opening_price
+        if high_price is not None:
+            payload["high"] = high_price
+        if low_price is not None:
+            payload["low"] = low_price
 
         acc_trade_price_24h = self._safe_float(raw.get("acc_trade_price_24h") or raw.get("atp24h"))
         acc_trade_volume_24h = self._safe_float(raw.get("acc_trade_volume_24h") or raw.get("atv24h"))

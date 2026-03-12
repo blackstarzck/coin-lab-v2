@@ -26,3 +26,14 @@ export interface StrategyVersion {
   is_validated: boolean;
   created_at: string;
 }
+
+export interface ValidationIssue {
+  code: string;
+  message: string;
+}
+
+export interface ValidationResult {
+  valid: boolean;
+  errors: ValidationIssue[];
+  warnings: ValidationIssue[];
+}

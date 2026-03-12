@@ -26,11 +26,10 @@ import { AlertCircle } from 'lucide-react'
 
 const CHANNELS = [
   { label: 'System', value: 'system' },
-  { label: 'Market Ingest', value: 'market_ingest' },
-  { label: 'Strategy Execution', value: 'strategy_execution' },
-  { label: 'Order Simulation', value: 'order_simulation' },
-  { label: 'Risk Control', value: 'risk_control' },
-  { label: 'Document Change', value: 'document_change' },
+  { label: 'Strategy Execution', value: 'strategy-execution' },
+  { label: 'Order Simulation', value: 'order-simulation' },
+  { label: 'Risk Control', value: 'risk-control' },
+  { label: 'Documents', value: 'documents' },
 ]
 
 function getLevelColor(level: string) {
@@ -113,6 +112,8 @@ export default function LogsPage() {
               <TableRow>
                 <TableCell sx={{ color: 'text.tertiary', fontSize: 12, width: 160 }}>Time</TableCell>
                 <TableCell sx={{ color: 'text.tertiary', fontSize: 12, width: 100 }}>Level</TableCell>
+                <TableCell sx={{ color: 'text.tertiary', fontSize: 12, width: 90 }}>Mode</TableCell>
+                <TableCell sx={{ color: 'text.tertiary', fontSize: 12, width: 160 }}>Trace</TableCell>
                 <TableCell sx={{ color: 'text.tertiary', fontSize: 12, width: 150 }}>Source</TableCell>
                 <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }}>Message</TableCell>
               </TableRow>
@@ -137,6 +138,12 @@ export default function LogsPage() {
                     />
                   </TableCell>
                   <TableCell sx={{ color: 'text.secondary', fontSize: '0.85rem' }}>
+                    {log.mode ?? '-'}
+                  </TableCell>
+                  <TableCell sx={{ color: 'text.secondary', fontFamily: 'monospace', fontSize: '0.8rem' }}>
+                    {log.trace_id ?? '-'}
+                  </TableCell>
+                  <TableCell sx={{ color: 'text.secondary', fontSize: '0.85rem' }}>
                     {log.channel}
                   </TableCell>
                   <TableCell sx={{ maxWidth: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -150,7 +157,7 @@ export default function LogsPage() {
               ))}
               {(!filteredLogs || filteredLogs.length === 0) && (
                 <TableRow>
-                  <TableCell colSpan={4} align="center" sx={{ py: 8, color: 'text.secondary' }}>
+                  <TableCell colSpan={6} align="center" sx={{ py: 8, color: 'text.secondary' }}>
                     <AlertCircle size={48} style={{ margin: '0 auto', opacity: 0.5, marginBottom: 16 }} />
                     <Typography variant="h6" color="text.secondary">
                       No log entries for this channel.

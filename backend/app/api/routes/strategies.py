@@ -4,7 +4,7 @@ from fastapi import APIRouter, Query
 
 from .. import response_envelope
 from ...application.container import get_container
-from ...schemas.strategy import StrategyCreate, StrategyUpdate, StrategyVersionCreate, ValidateRequest
+from ...schemas.strategy import DraftValidateRequest, StrategyCreate, StrategyUpdate, StrategyVersionCreate, ValidateRequest
 
 router = APIRouter(prefix="/strategies")
 version_router = APIRouter()
@@ -56,6 +56,11 @@ def list_versions(strategy_id: str) -> dict[str, object]:
 @router.post("/{strategy_id}/versions")
 def create_version(strategy_id: str, payload: StrategyVersionCreate) -> dict[str, object]:
     return response_envelope(get_container().strategy_service.create_strategy_version(strategy_id, payload))
+
+
+@router.post("/validate-draft")
+def validate_draft(payload: DraftValidateRequest) -> dict[str, object]:
+    return response_envelope(get_container().strategy_service.validate_draft(payload.config_json, payload.strict))
 
 
 @version_router.get("/strategy-versions/{version_id}")

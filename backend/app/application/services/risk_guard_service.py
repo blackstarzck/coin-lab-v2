@@ -7,6 +7,7 @@ from ...core import error_codes
 from ...core.logging import get_logger
 from ...domain.entities.session import (
     ExecutionMode,
+    Position,
     PositionState,
     ReentryState,
     RiskCheckResult,
@@ -103,6 +104,13 @@ class RiskGuardService:
 
     def register_position(self, session_id: str, symbol: str, state: PositionState) -> None:
         self._open_positions.setdefault(session_id, {})[symbol] = state
+
+    def sync_open_positions(self, session_id: str, positions: list[Position]) -> None:
+        self._open_positions[session_id] = {
+            position.symbol: position.position_state
+            for position in positions
+            if position.position_state in {PositionState.OPENING, PositionState.OPEN, PositionState.CLOSING}
+        }
 
     def set_reentry_state(self, session_id: str, symbol: str, state: ReentryState) -> None:
         self._reentry_states.setdefault(session_id, {})[symbol] = state

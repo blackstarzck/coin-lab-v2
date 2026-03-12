@@ -60,6 +60,10 @@ class ValidateRequest(BaseModel):
     strict: bool = True
 
 
+class DraftValidateRequest(ValidateRequest):
+    config_json: dict[str, object]
+
+
 class ValidateResponse(BaseModel):
     valid: bool
     errors: list[dict[str, str]] = Field(default_factory=list)

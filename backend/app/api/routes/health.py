@@ -46,3 +46,9 @@ def metadata_timeframes() -> dict[str, object]:
 @router.get("/metadata/markets")
 def metadata_markets() -> dict[str, object]:
     return response_envelope(get_container().health_service.metadata_markets())
+
+
+@router.get("/settings/runtime")
+def settings_runtime() -> dict[str, object]:
+    container = get_container()
+    return response_envelope(container.health_service.settings_summary(container.runtime_service.status()))

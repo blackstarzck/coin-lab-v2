@@ -129,7 +129,7 @@ npm.cmd run dev
 Health checks:
 
 - frontend: `http://localhost:5173`
-- backend: `http://localhost:8000/api/v1/health`
+- backend: `http://127.0.0.1:8012/api/v1/health`
 
 ## How to see immediate strategy execution
 UI flow:
@@ -146,7 +146,7 @@ API flow:
 PAPER:
 
 ```powershell
-Invoke-WebRequest -Method POST http://127.0.0.1:8000/api/v1/sessions -ContentType "application/json" -Body '{
+Invoke-WebRequest -Method POST http://127.0.0.1:8012/api/v1/sessions -ContentType "application/json" -Body '{
   "mode": "PAPER",
   "strategy_version_id": "stv_001",
   "symbol_scope": {
@@ -164,7 +164,7 @@ Invoke-WebRequest -Method POST http://127.0.0.1:8000/api/v1/sessions -ContentTyp
 LIVE:
 
 ```powershell
-Invoke-WebRequest -Method POST http://127.0.0.1:8000/api/v1/sessions -ContentType "application/json" -Body '{
+Invoke-WebRequest -Method POST http://127.0.0.1:8012/api/v1/sessions -ContentType "application/json" -Body '{
   "mode": "LIVE",
   "strategy_version_id": "stv_001",
   "symbol_scope": {
@@ -175,7 +175,8 @@ Invoke-WebRequest -Method POST http://127.0.0.1:8000/api/v1/sessions -ContentTyp
   },
   "risk_overrides": {},
   "confirm_live": true,
-  "acknowledge_risk": true
+  "acknowledge_risk": true,
+  "order_test_passed": true
 }'
 ```
 
@@ -196,7 +197,7 @@ Important:
 Dashboard shows a backend load error:
 
 - backend may not have finished starting before frontend loaded
-- confirm `http://localhost:8000/api/v1/health` returns `200`
+- confirm `http://127.0.0.1:8012/api/v1/health` returns `200`
 - refresh the browser after backend is healthy
 
 LIVE start is blocked:
@@ -204,6 +205,7 @@ LIVE start is blocked:
 - verify `COIN_LAB_LIVE_TRADING_ENABLED`
 - verify Upbit access and secret keys exist
 - verify `COIN_LAB_LIVE_ORDER_NOTIONAL_KRW >= 5000`
+- verify `order_test_passed=true` when `COIN_LAB_LIVE_REQUIRE_ORDER_TEST=true`
 - verify `confirm_live=true` and `acknowledge_risk=true`
 
 Session is `RUNNING` but there are no signals or orders:

@@ -736,12 +736,14 @@
   },
   "risk_overrides": {},
   "confirm_live": true,
-  "acknowledge_risk": true
+  "acknowledge_risk": true,
+  "order_test_passed": true
 }
 ```
 
 #### Validation
 - `mode`: `BACKTEST | PAPER | LIVE`
+- `COIN_LAB_LIVE_REQUIRE_ORDER_TEST=true` 이면 `order_test_passed=true` 필수
 - LIVE면 `confirm_live=true` 및 `acknowledge_risk=true` 필수
 - `strategy_version_id`는 단일 값이어야 함
 - `strategy_version_id`는 validated 상태여야 함

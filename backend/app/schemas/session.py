@@ -13,6 +13,7 @@ class SessionCreate(BaseModel):
     risk_overrides: dict[str, object] = Field(default_factory=dict)
     confirm_live: bool = False
     acknowledge_risk: bool = False
+    order_test_passed: bool = False
 
 
 class SessionResponse(BaseModel):

@@ -9,6 +9,8 @@ class LogEntryResponse(BaseModel):
     id: str
     channel: str
     level: str
+    trace_id: str | None = None
+    mode: str | None = None
     session_id: str | None = None
     strategy_version_id: str | None = None
     symbol: str | None = None

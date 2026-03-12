@@ -62,7 +62,7 @@ export function CandlestickChart({ data, width, height = 400 }: CandlestickChart
   }, [theme, width, height])
 
   useEffect(() => {
-    if (seriesRef.current && data.length > 0) {
+    if (seriesRef.current) {
       const formattedData: CandlestickData<Time>[] = data.map(d => ({
         time: (new Date(d.time).getTime() / 1000) as Time,
         open: d.open,
@@ -71,6 +71,7 @@ export function CandlestickChart({ data, width, height = 400 }: CandlestickChart
         close: d.close,
       }))
       seriesRef.current.setData(formattedData)
+      chartRef.current?.timeScale().fitContent()
     }
   }, [data])
 

@@ -271,6 +271,21 @@ def test_risk_guard_max_positions_blocked() -> None:
     assert result.blocked_codes == [error_codes.RISK_MAX_CONCURRENT_POSITIONS_REACHED]
 
 
+def test_existing_open_position_blocks_duplicate_entry_after_runtime_sync() -> None:
+    execution, _, _, _ = _services()
+    execution.sync_positions([_position(stop=95.0, tp=110.0)])
+
+    result = execution.process_snapshot(
+        _session(),
+        _base_strategy_config(),
+        _snapshot(latest=110.0, open_price=100.0, high=112.0, low=99.0, close=111.0),
+    )
+
+    assert result["accepted"] is False
+    assert result["reason_codes"] == [error_codes.RISK_DUPLICATE_POSITION_BLOCKED]
+    assert "order" not in result
+
+
 def test_risk_guard_daily_loss_blocked() -> None:
     risk_guard = RiskGuardService()
     cfg = _base_strategy_config()

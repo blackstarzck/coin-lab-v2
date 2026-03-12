@@ -122,5 +122,8 @@ class StrategyService:
         self.store.update_strategy_version(version)
         return result
 
+    def validate_draft(self, config_json: dict[str, object], strict: bool) -> dict[str, object]:
+        return self.validator.validate(config_json, strict)
+
     def validate_strategy_version(self, version_id: str, strict: bool) -> dict[str, object]:
         return self.validate_version(version_id, strict)

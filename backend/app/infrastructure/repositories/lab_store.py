@@ -36,6 +36,10 @@ class LabStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def list_strategy_versions_by_ids(self, version_ids: list[str]) -> list[StrategyVersion]:
+        raise NotImplementedError
+
+    @abstractmethod
     def create_strategy_version(self, version: StrategyVersion) -> StrategyVersion:
         raise NotImplementedError
 
@@ -45,6 +49,10 @@ class LabStore(ABC):
 
     @abstractmethod
     def create_session(self, session: Session) -> Session:
+        raise NotImplementedError
+
+    @abstractmethod
+    def update_session(self, session: Session) -> Session:
         raise NotImplementedError
 
     @abstractmethod
@@ -64,7 +72,27 @@ class LabStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def list_signals_for_sessions(self, session_ids: list[str]) -> list[Signal]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def create_signal(self, signal: Signal) -> Signal:
+        raise NotImplementedError
+
+    @abstractmethod
     def list_session_positions(self, session_id: str) -> list[Position]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_positions_for_sessions(self, session_ids: list[str]) -> list[Position]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def create_position(self, position: Position) -> Position:
+        raise NotImplementedError
+
+    @abstractmethod
+    def update_position(self, position: Position) -> Position:
         raise NotImplementedError
 
     @abstractmethod
@@ -72,7 +100,19 @@ class LabStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def create_order(self, order: Order) -> Order:
+        raise NotImplementedError
+
+    @abstractmethod
     def list_session_risk_events(self, session_id: str) -> list[RiskEvent]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_risk_events_for_sessions(self, session_ids: list[str]) -> list[RiskEvent]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def create_risk_event(self, event: RiskEvent) -> RiskEvent:
         raise NotImplementedError
 
     @abstractmethod
@@ -97,6 +137,14 @@ class LabStore(ABC):
 
     @abstractmethod
     def get_current_universe(self) -> list[dict[str, object]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def update_universe(self, symbols: list[str]) -> list[dict[str, object]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def append_log(self, entry: LogEntry) -> LogEntry:
         raise NotImplementedError
 
     @abstractmethod

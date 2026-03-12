@@ -79,24 +79,28 @@ class Container:
         risk_guard_service = RiskGuardService()
         fill_engine = FillEngine()
         signal_generator = SignalGenerator()
+        execution_service = ExecutionService(risk_guard_service, fill_engine, signal_generator)
+        market_ingest_service = MarketIngestService()
+        stream_service = StreamService(store)
+        runtime_service = RuntimeService(settings, store, stream_service, market_ingest_service, execution_service)
         return cls(
             settings=settings,
             store=store,
             strategy_service=StrategyService(store, strategy_validator),
-            session_service=SessionService(store),
+            session_service=SessionService(store, settings),
             backtest_service=BacktestService(store),
             monitoring_service=MonitoringService(store),
             log_service=LogService(store),
             universe_service=UniverseService(store),
-            stream_service=StreamService(),
+            stream_service=stream_service,
             health_service=HealthService(settings, store),
             strategy_validator=strategy_validator,
-            execution_service=ExecutionService(risk_guard_service, fill_engine, signal_generator),
+            execution_service=execution_service,
             risk_guard_service=risk_guard_service,
             fill_engine=fill_engine,
             signal_generator=signal_generator,
-            runtime_service=RuntimeService(settings, store),
-            market_ingest_service=MarketIngestService(),
+            runtime_service=runtime_service,
+            market_ingest_service=market_ingest_service,
         )
 
 

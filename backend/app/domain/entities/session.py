@@ -208,13 +208,15 @@ class LogEntry:
     id: str
     channel: str
     level: str
-    session_id: str | None
-    strategy_version_id: str | None
-    symbol: str | None
     event_type: str
     message: str
     payload: dict[str, object]
     logged_at: datetime
+    session_id: str | None = None
+    strategy_version_id: str | None = None
+    symbol: str | None = None
+    trace_id: str | None = None
+    mode: str | None = None
 
 
 @dataclass(slots=True)

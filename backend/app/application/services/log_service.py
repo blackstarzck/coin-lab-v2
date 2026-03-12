@@ -14,6 +14,8 @@ class LogService:
                 "id": item.id,
                 "channel": item.channel,
                 "level": item.level,
+                "trace_id": item.trace_id,
+                "mode": item.mode,
                 "session_id": item.session_id,
                 "strategy_version_id": item.strategy_version_id,
                 "symbol": item.symbol,

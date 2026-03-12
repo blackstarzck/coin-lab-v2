@@ -37,6 +37,17 @@ class BacktestService:
         return run
 
     def create_run(self, data: BacktestRunRequest) -> BacktestRun:
+        strategy_version = self.store.get_strategy_version(data.strategy_version_id)
+        if strategy_version is None:
+            raise NotFoundError("Strategy version not found", {"strategy_version_id": data.strategy_version_id})
+
+        backtest_config = strategy_version.config_json.get("backtest", {})
+        initial_capital = 1000000
+        if isinstance(backtest_config, dict):
+            capital_value = backtest_config.get("initial_capital")
+            if isinstance(capital_value, (int, float)):
+                initial_capital = float(capital_value)
+
         run = BacktestRun(
             id=f"btr_{uuid4().hex[:12]}",
             status="QUEUED",
@@ -45,7 +56,7 @@ class BacktestService:
             timeframes=data.timeframes,
             date_from=_normalize_dt(data.date_from),
             date_to=_normalize_dt(data.date_to),
-            initial_capital=1000000,
+            initial_capital=initial_capital,
             metrics={
                 "total_return_pct": 12.45,
                 "max_drawdown_pct": -4.2,

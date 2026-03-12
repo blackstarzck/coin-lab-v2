@@ -24,15 +24,14 @@ import {
   Skeleton,
   Stack,
   Tooltip,
-  useTheme
 } from '@mui/material'
+import type { ChipProps } from '@mui/material'
 import { Eye, Edit2, Play, Activity } from 'lucide-react'
 import { useStrategies } from '@/features/strategies/api'
 import { formatDistanceToNow } from 'date-fns'
 
 export default function StrategiesPage() {
   const navigate = useNavigate()
-  const theme = useTheme()
   const { data: strategies, isLoading } = useStrategies()
 
   const [search, setSearch] = useState('')
@@ -55,7 +54,7 @@ export default function StrategiesPage() {
     })
   }, [strategies, search, typeFilter, activeOnly])
 
-  const getTypeColor = (type: string) => {
+  const getTypeColor = (type: string): ChipProps['color'] => {
     switch (type) {
       case 'dsl': return 'info'
       case 'plugin': return 'warning'
@@ -163,7 +162,7 @@ export default function StrategiesPage() {
                     <Chip 
                       label={strategy.strategy_type.toUpperCase()} 
                       size="small" 
-                      color={getTypeColor(strategy.strategy_type) as any}
+                      color={getTypeColor(strategy.strategy_type)}
                       sx={{ fontSize: 10, height: 20 }}
                     />
                   </TableCell>

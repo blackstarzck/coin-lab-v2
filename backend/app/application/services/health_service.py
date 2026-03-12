@@ -38,3 +38,24 @@ class HealthService:
 
     def metadata_markets(self) -> list[str]:
         return ["KRW", "BTC", "USDT"]
+
+    def settings_summary(self, runtime_status: dict[str, object]) -> dict[str, object]:
+        return {
+            "upbit": {
+                "rest_base_url": self.settings.upbit_rest_base_url,
+                "ws_public_url": self.settings.upbit_ws_public_url,
+                "ws_private_url": self.settings.upbit_ws_private_url,
+                "access_key_configured": bool(self.settings.upbit_access_key),
+                "secret_key_configured": bool(self.settings.upbit_secret_key),
+            },
+            "storage": {
+                "store_backend": self.settings.store_backend,
+                "database_configured": bool(self.settings.database_url),
+            },
+            "live_protection": {
+                "live_trading_enabled": self.settings.live_trading_enabled,
+                "live_require_order_test": self.settings.live_require_order_test,
+                "live_order_notional_krw": self.settings.live_order_notional_krw,
+            },
+            "runtime": runtime_status,
+        }
