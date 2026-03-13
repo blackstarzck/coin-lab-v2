@@ -10,12 +10,12 @@ from app.core.exceptions import NotFoundError
 from app.infrastructure.repositories.in_memory_lab_store import InMemoryLabStore
 from app.main import app
 from app.schemas.backtest import BacktestRunRequest
+from tests.support import populate_test_store
 
 
 def _store() -> InMemoryLabStore:
     store = InMemoryLabStore()
-    store.seed_defaults()
-    return store
+    return populate_test_store(store)
 
 
 def test_backtest_run_requires_existing_strategy_version() -> None:
@@ -67,3 +67,27 @@ def test_backtest_run_uses_strategy_backtest_initial_capital() -> None:
     )
 
     assert run.initial_capital == 1000000
+
+
+def test_backtest_run_falls_back_to_strategy_static_symbols() -> None:
+    store = _store()
+    version = store.get_strategy_version("stv_001")
+    assert version is not None
+    version.config_json["universe"] = {
+        "mode": "static",
+        "symbols": ["KRW-BTC", "KRW-XRP"],
+    }
+    store.update_strategy_version(version)
+    service = BacktestService(store)
+
+    run = service.create_run(
+        BacktestRunRequest(
+            strategy_version_id="stv_001",
+            symbols=[],
+            timeframes=["5m"],
+            date_from=datetime.fromisoformat("2025-12-01T00:00:00+00:00"),
+            date_to=datetime.fromisoformat("2026-03-01T00:00:00+00:00"),
+        )
+    )
+
+    assert run.symbols == ["KRW-BTC", "KRW-XRP"]

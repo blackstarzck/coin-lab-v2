@@ -14,3 +14,25 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+
+.animated-odometer {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.2em;
+}
+
+.animated-odometer .odometer,
+.animated-odometer .odometer-inside {
+  font: inherit;
+  line-height: inherit;
+}
+
+.animated-odometer__value {
+  display: inline-block;
+}
+
+.animated-odometer__sign,
+.animated-odometer__suffix {
+  display: inline-block;
+  opacity: 0.84;
+}

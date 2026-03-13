@@ -34,9 +34,19 @@ import {
 import { useUiStore } from '@/stores/ui-store'
 import { CandlestickChart } from '@/shared/charts/CandlestickChart'
 import { useChartStream } from '@/features/monitoring/useChartStream'
-import { format } from 'date-fns'
 import { useEffect, useMemo, useState } from 'react'
 import { useLogs } from '@/features/logs/api'
+import {
+  formatTime,
+  translateConnectionState,
+  translateMode,
+  translateOrderRole,
+  translateOrderState,
+  translatePositionState,
+  translateSessionStatus,
+  translateSeverity,
+  translateSignalAction,
+} from '@/shared/lib/i18n'
 
 export default function MonitoringPage() {
   const theme = useTheme()
@@ -167,11 +177,11 @@ export default function MonitoringPage() {
       <Card sx={{ flexShrink: 0 }}>
         <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 }, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Stack direction="row" spacing={2} alignItems="center">
-            <Typography variant="h6" sx={{ mr: 2 }}>Monitoring</Typography>
+            <Typography variant="h6" sx={{ mr: 2 }}>모니터링</Typography>
             {session ? (
               <>
                 <Chip 
-                  label={session.mode} 
+                  label={translateMode(session.mode)} 
                   size="small" 
                   sx={{ 
                     bgcolor: getModeColor(session.mode) === 'default' ? 'action.disabledBackground' : `status.${getModeColor(session.mode)}`,
@@ -179,7 +189,7 @@ export default function MonitoringPage() {
                   }} 
                 />
                 <Chip 
-                  label={session.status} 
+                  label={translateSessionStatus(session.status)} 
                   size="small" 
                   variant="outlined"
                   sx={{ 
@@ -192,20 +202,20 @@ export default function MonitoringPage() {
                 </Typography>
                 <Divider orientation="vertical" flexItem />
                 <Typography variant="body2" color="text.secondary">
-                  Strategy v{session.strategy_version_id.split('-')[0]}
+                  전략 v{session.strategy_version_id.split('-')[0]}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  {session.started_at ? format(new Date(session.started_at), 'MM-dd HH:mm:ss') : 'Not started'}
+                  {session.started_at ? formatTime(session.started_at) : '시작 전'}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Compare {compareSessions.length}
+                  비교 {compareSessions.length}개
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Symbols {availableSymbols.length}
+                  심볼 {availableSymbols.length}개
                 </Typography>
                 {session.health && (
                   <Chip 
-                    label={session.health.connection_state} 
+                    label={translateConnectionState(session.health.connection_state)} 
                     size="small" 
                     variant="outlined" 
                     sx={{ 
@@ -216,11 +226,11 @@ export default function MonitoringPage() {
                   />
                 )}
                 {session.mode === 'LIVE' ? (
-                  <Chip label="LIVE SAFETY ACTIVE" size="small" color="error" />
+                  <Chip label="실전 안전장치 활성" size="small" color="error" />
                 ) : null}
               </>
             ) : (
-              <Typography color="text.secondary" variant="body2">No session selected</Typography>
+              <Typography color="text.secondary" variant="body2">선택된 세션이 없습니다</Typography>
             )}
           </Stack>
           
@@ -236,7 +246,7 @@ export default function MonitoringPage() {
                 }
               }}
             >
-              Stop
+              중지
             </Button>
             <Button 
               variant="contained" 
@@ -249,7 +259,7 @@ export default function MonitoringPage() {
                 }
               }}
             >
-              Emergency Kill
+              긴급 종료
             </Button>
           </Stack>
         </CardContent>
@@ -261,12 +271,12 @@ export default function MonitoringPage() {
         {/* Left Panel - Sessions & Universe */}
         <Card sx={{ width: 280, display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
           <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
-            <Typography variant="subtitle2" color="text.secondary" gutterBottom>SESSIONS</Typography>
+            <Typography variant="subtitle2" color="text.secondary" gutterBottom>세션</Typography>
             <Stack spacing={1} sx={{ maxHeight: 200, overflowY: 'auto' }}>
               {isLoadingSessions ? (
                 <Skeleton variant="rounded" height={40} />
               ) : sessions?.length === 0 ? (
-                <Typography variant="body2" color="text.secondary">No active sessions</Typography>
+                <Typography variant="body2" color="text.secondary">실행 중인 세션이 없습니다</Typography>
               ) : (
                 sessions?.map(s => (
                   <Box 
@@ -285,7 +295,7 @@ export default function MonitoringPage() {
                     <Stack direction="row" justifyContent="space-between" alignItems="center" mb={0.5}>
                       <Typography variant="body2" fontFamily="monospace">{s.id.split('-')[0]}</Typography>
                       <Chip 
-                        label={s.mode} 
+                        label={translateMode(s.mode)} 
                         size="small" 
                         sx={{ 
                           fontSize: 10, 
@@ -306,7 +316,7 @@ export default function MonitoringPage() {
           </Box>
 
           <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
-            <Typography variant="subtitle2" color="text.secondary" gutterBottom>COMPARE</Typography>
+            <Typography variant="subtitle2" color="text.secondary" gutterBottom>비교</Typography>
             <Stack spacing={0.5}>
               {(sessions ?? []).slice(0, 4).map((compareSession) => (
                 <Box key={compareSession.id} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -324,19 +334,19 @@ export default function MonitoringPage() {
                       </Typography>
                     </Box>
                   </Stack>
-                  <Chip label={compareSession.mode} size="small" variant="outlined" sx={{ height: 18, fontSize: 10 }} />
+                  <Chip label={translateMode(compareSession.mode)} size="small" variant="outlined" sx={{ height: 18, fontSize: 10 }} />
                 </Box>
               ))}
             </Stack>
           </Box>
           
           <Box sx={{ p: 2, flexGrow: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-            <Typography variant="subtitle2" color="text.secondary" gutterBottom>ACTIVE UNIVERSE</Typography>
+            <Typography variant="subtitle2" color="text.secondary" gutterBottom>활성 유니버스</Typography>
             <Box sx={{ overflowY: 'auto', flexGrow: 1 }}>
               {!session ? (
-                <Typography variant="body2" color="text.secondary">Select a session</Typography>
+                <Typography variant="body2" color="text.secondary">세션을 선택하세요</Typography>
               ) : !session.symbol_scope?.active_symbols?.length ? (
-                <Typography variant="body2" color="text.secondary">No active symbols</Typography>
+                <Typography variant="body2" color="text.secondary">활성 심볼이 없습니다</Typography>
               ) : (
                 <Stack spacing={0.5}>
                   {session.symbol_scope.active_symbols.map(sym => (
@@ -369,10 +379,10 @@ export default function MonitoringPage() {
           <Box sx={{ p: 1.5, borderBottom: 1, borderColor: 'divider', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <Stack direction="row" spacing={2} alignItems="center">
               <Typography variant="subtitle1" fontWeight={600}>
-                {activeSymbol || 'No Symbol Selected'}
+                {activeSymbol || '선택된 심볼 없음'}
               </Typography>
               {isConnected && (
-                <Chip icon={<RefreshCw size={12} />} label="Live" size="small" color="success" variant="outlined" sx={{ height: 20, fontSize: 10 }} />
+                <Chip icon={<RefreshCw size={12} />} label="실시간" size="small" color="success" variant="outlined" sx={{ height: 20, fontSize: 10 }} />
               )}
             </Stack>
             
@@ -394,21 +404,21 @@ export default function MonitoringPage() {
               <Divider orientation="vertical" flexItem />
               <Stack direction="row" spacing={0.5}>
                 <Chip 
-                  label="MA" 
+                  label="이평선" 
                   size="small" 
                   variant={chartOverlays.ma ? 'filled' : 'outlined'} 
                   onClick={() => toggleChartOverlay('ma')}
                   sx={{ cursor: 'pointer' }}
                 />
                 <Chip 
-                  label="Vol" 
+                  label="거래량" 
                   size="small" 
                   variant={chartOverlays.volume ? 'filled' : 'outlined'} 
                   onClick={() => toggleChartOverlay('volume')}
                   sx={{ cursor: 'pointer' }}
                 />
                 <Chip 
-                  label="Signals" 
+                  label="신호" 
                   size="small" 
                   variant={chartOverlays.signalMarkers ? 'filled' : 'outlined'} 
                   onClick={() => toggleChartOverlay('signalMarkers')}
@@ -420,13 +430,13 @@ export default function MonitoringPage() {
           
           <Box sx={{ flexGrow: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
             {!activeSymbol ? (
-              <Typography color="text.secondary">Select a session and symbol to view chart</Typography>
+              <Typography color="text.secondary">차트를 보려면 세션과 심볼을 선택하세요</Typography>
             ) : chartData?.candles?.length ? (
               <CandlestickChart data={chartData.candles} height={400} />
             ) : (
               <Box sx={{ textAlign: 'center' }}>
                 <Activity size={32} color={theme.palette.text.disabled} style={{ marginBottom: 8 }} />
-                <Typography color="text.secondary">Waiting for chart data...</Typography>
+                <Typography color="text.secondary">차트 데이터를 기다리는 중입니다...</Typography>
               </Box>
             )}
           </Box>
@@ -436,10 +446,10 @@ export default function MonitoringPage() {
         <Card sx={{ width: 360, display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
           <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
             <Tabs value={rightTab} onChange={(_, v) => setRightTab(v)} variant="fullWidth" sx={{ minHeight: 40 }}>
-              <Tab label="Signals" sx={{ minHeight: 40, py: 1 }} />
-              <Tab label="Positions" sx={{ minHeight: 40, py: 1 }} />
-              <Tab label="Orders" sx={{ minHeight: 40, py: 1 }} />
-              <Tab label="Risk" sx={{ minHeight: 40, py: 1 }} />
+              <Tab label="신호" sx={{ minHeight: 40, py: 1 }} />
+              <Tab label="포지션" sx={{ minHeight: 40, py: 1 }} />
+              <Tab label="주문" sx={{ minHeight: 40, py: 1 }} />
+              <Tab label="리스크" sx={{ minHeight: 40, py: 1 }} />
             </Tabs>
           </Box>
           
@@ -449,25 +459,25 @@ export default function MonitoringPage() {
                 <Table size="small" sx={{ '& .MuiTableCell-root': { py: 1, px: 1.5 } }}>
                   <TableHead>
                     <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 11 } }}>
-                      <TableCell>Time</TableCell>
-                      <TableCell>Sym</TableCell>
-                      <TableCell>Action</TableCell>
-                      <TableCell align="right">Price</TableCell>
+                      <TableCell>시간</TableCell>
+                      <TableCell>심볼</TableCell>
+                      <TableCell>액션</TableCell>
+                      <TableCell align="right">가격</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {!signals?.length ? (
-                      <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><Typography variant="body2" color="text.secondary">No signals</Typography></TableCell></TableRow>
+                      <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><Typography variant="body2" color="text.secondary">신호가 없습니다</Typography></TableCell></TableRow>
                     ) : (
                       signals.map(sig => {
                         const actionColor = getActionColor(sig.action)
                         return (
                           <TableRow key={sig.id} hover sx={{ bgcolor: sig.blocked ? 'rgba(255, 152, 0, 0.05)' : 'transparent' }}>
-                            <TableCell sx={{ whiteSpace: 'nowrap' }}><Typography variant="caption" color="text.secondary">{format(new Date(sig.snapshot_time), 'HH:mm:ss')}</Typography></TableCell>
+                            <TableCell sx={{ whiteSpace: 'nowrap' }}><Typography variant="caption" color="text.secondary">{formatTime(sig.snapshot_time)}</Typography></TableCell>
                             <TableCell><Typography variant="caption" fontWeight={600}>{sig.symbol}</Typography></TableCell>
                             <TableCell>
                               <Chip 
-                                label={sig.action} 
+                                label={translateSignalAction(sig.action)} 
                                 size="small" 
                                 sx={{ 
                                   fontSize: 9, 
@@ -476,7 +486,7 @@ export default function MonitoringPage() {
                                   color: 'white'
                                 }} 
                               />
-                              {sig.blocked && <Chip label="BLK" size="small" color="warning" variant="outlined" sx={{ fontSize: 9, height: 16, ml: 0.5 }} />}
+                              {sig.blocked && <Chip label="차단" size="small" color="warning" variant="outlined" sx={{ fontSize: 9, height: 16, ml: 0.5 }} />}
                             </TableCell>
                             <TableCell align="right"><Typography variant="caption" sx={{ fontVariantNumeric: 'tabular-nums' }}>{sig.signal_price.toLocaleString()}</Typography></TableCell>
                           </TableRow>
@@ -493,22 +503,22 @@ export default function MonitoringPage() {
                 <Table size="small" sx={{ '& .MuiTableCell-root': { py: 1, px: 1.5 } }}>
                   <TableHead>
                     <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 11 } }}>
-                      <TableCell>Sym</TableCell>
-                      <TableCell align="right">Qty</TableCell>
-                      <TableCell align="right">Entry</TableCell>
-                      <TableCell align="right">PnL</TableCell>
+                      <TableCell>심볼</TableCell>
+                      <TableCell align="right">수량</TableCell>
+                      <TableCell align="right">진입가</TableCell>
+                      <TableCell align="right">손익</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {!positions?.length ? (
-                      <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><Typography variant="body2" color="text.secondary">No positions</Typography></TableCell></TableRow>
+                      <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><Typography variant="body2" color="text.secondary">포지션이 없습니다</Typography></TableCell></TableRow>
                     ) : (
                       positions.map(pos => (
                         <TableRow key={pos.id} hover>
                           <TableCell>
                             <Typography variant="caption" fontWeight={600} display="block">{pos.symbol}</Typography>
                             <Chip 
-                              label={pos.position_state} 
+                              label={translatePositionState(pos.position_state)} 
                               size="small" 
                               sx={{ 
                                 fontSize: 9, 
@@ -541,24 +551,24 @@ export default function MonitoringPage() {
                 <Table size="small" sx={{ '& .MuiTableCell-root': { py: 1, px: 1.5 } }}>
                   <TableHead>
                     <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 11 } }}>
-                      <TableCell>Time</TableCell>
-                      <TableCell>Sym</TableCell>
-                      <TableCell>Type</TableCell>
-                      <TableCell align="right">Price</TableCell>
+                      <TableCell>시간</TableCell>
+                      <TableCell>심볼</TableCell>
+                      <TableCell>유형</TableCell>
+                      <TableCell align="right">가격</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {!orders?.length ? (
-                      <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><Typography variant="body2" color="text.secondary">No orders</Typography></TableCell></TableRow>
+                      <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><Typography variant="body2" color="text.secondary">주문이 없습니다</Typography></TableCell></TableRow>
                     ) : (
                       orders.map(ord => (
                         <TableRow key={ord.id} hover>
-                          <TableCell sx={{ whiteSpace: 'nowrap' }}><Typography variant="caption" color="text.secondary">{format(new Date(ord.submitted_at), 'HH:mm:ss')}</Typography></TableCell>
+                          <TableCell sx={{ whiteSpace: 'nowrap' }}><Typography variant="caption" color="text.secondary">{formatTime(ord.submitted_at)}</Typography></TableCell>
                           <TableCell><Typography variant="caption" fontWeight={600}>{ord.symbol}</Typography></TableCell>
                           <TableCell>
-                            <Typography variant="caption" display="block">{ord.order_type}</Typography>
+                            <Typography variant="caption" display="block">{ord.order_type === 'MARKET' ? '시장가' : ord.order_type === 'LIMIT' ? '지정가' : ord.order_type}</Typography>
                             <Chip 
-                              label={ord.order_state} 
+                              label={translateOrderState(ord.order_state)} 
                               size="small" 
                               sx={{ 
                                 fontSize: 9, 
@@ -570,7 +580,7 @@ export default function MonitoringPage() {
                           </TableCell>
                           <TableCell align="right">
                             <Typography variant="caption" sx={{ fontVariantNumeric: 'tabular-nums', display: 'block' }}>
-                              {ord.executed_price ? ord.executed_price.toLocaleString() : (ord.requested_price ? ord.requested_price.toLocaleString() : 'MKT')}
+                              {ord.executed_price ? ord.executed_price.toLocaleString() : (ord.requested_price ? ord.requested_price.toLocaleString() : '시장가')}
                             </Typography>
                             <Typography variant="caption" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums' }}>
                               {ord.executed_qty}/{ord.requested_qty}
@@ -589,20 +599,20 @@ export default function MonitoringPage() {
                 <Table size="small" sx={{ '& .MuiTableCell-root': { py: 1, px: 1.5 } }}>
                   <TableHead>
                     <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 11 } }}>
-                      <TableCell>Time</TableCell>
-                      <TableCell>Code</TableCell>
-                      <TableCell>Severity</TableCell>
+                      <TableCell>시간</TableCell>
+                      <TableCell>코드</TableCell>
+                      <TableCell>심각도</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {!riskEvents?.length ? (
-                      <TableRow><TableCell colSpan={3} align="center" sx={{ py: 4 }}><Typography variant="body2" color="text.secondary">No risk events</Typography></TableCell></TableRow>
+                      <TableRow><TableCell colSpan={3} align="center" sx={{ py: 4 }}><Typography variant="body2" color="text.secondary">리스크 이벤트가 없습니다</Typography></TableCell></TableRow>
                     ) : (
                       riskEvents.map((event) => (
                         <TableRow key={event.id} hover>
-                          <TableCell><Typography variant="caption" color="text.secondary">{format(new Date(event.created_at), 'HH:mm:ss')}</Typography></TableCell>
+                          <TableCell><Typography variant="caption" color="text.secondary">{formatTime(event.created_at)}</Typography></TableCell>
                           <TableCell><Typography variant="caption" fontFamily="monospace">{event.code}</Typography></TableCell>
-                          <TableCell><Chip label={event.severity} size="small" color={event.severity === 'WARN' ? 'warning' : 'error'} /></TableCell>
+                          <TableCell><Chip label={translateSeverity(event.severity)} size="small" color={event.severity === 'WARN' ? 'warning' : 'error'} /></TableCell>
                         </TableRow>
                       ))
                     )}
@@ -618,10 +628,10 @@ export default function MonitoringPage() {
       <Card sx={{ height: 200, flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
         <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
           <Tabs value={bottomTab} onChange={(_, v) => setBottomTab(v)} sx={{ minHeight: 40 }}>
-            <Tab label="Event Log" sx={{ minHeight: 40, py: 1 }} />
-            <Tab label="Strategy Explain" sx={{ minHeight: 40, py: 1 }} />
-            <Tab label="Order Timeline" sx={{ minHeight: 40, py: 1 }} />
-            <Tab label="Risk Events" sx={{ minHeight: 40, py: 1 }} />
+            <Tab label="이벤트 로그" sx={{ minHeight: 40, py: 1 }} />
+            <Tab label="전략 해설" sx={{ minHeight: 40, py: 1 }} />
+            <Tab label="주문 타임라인" sx={{ minHeight: 40, py: 1 }} />
+            <Tab label="리스크 이벤트" sx={{ minHeight: 40, py: 1 }} />
           </Tabs>
         </Box>
         <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
@@ -630,18 +640,18 @@ export default function MonitoringPage() {
               <Table size="small">
                 <TableHead>
                   <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 11 } }}>
-                    <TableCell>Time</TableCell>
-                    <TableCell>Type</TableCell>
-                    <TableCell>Message</TableCell>
+                    <TableCell>시간</TableCell>
+                    <TableCell>유형</TableCell>
+                    <TableCell>메시지</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {!eventLogs?.length ? (
-                    <TableRow><TableCell colSpan={3} align="center" sx={{ py: 4 }}><Typography color="text.secondary">No event logs</Typography></TableCell></TableRow>
+                    <TableRow><TableCell colSpan={3} align="center" sx={{ py: 4 }}><Typography color="text.secondary">이벤트 로그가 없습니다</Typography></TableCell></TableRow>
                   ) : (
                     eventLogs.slice(0, 20).map((log) => (
                       <TableRow key={log.id} hover>
-                        <TableCell><Typography variant="caption" color="text.secondary">{format(new Date(log.timestamp), 'HH:mm:ss')}</Typography></TableCell>
+                        <TableCell><Typography variant="caption" color="text.secondary">{formatTime(log.timestamp)}</Typography></TableCell>
                         <TableCell><Typography variant="caption" fontFamily="monospace">{log.event_type ?? '-'}</Typography></TableCell>
                         <TableCell><Typography variant="caption">{log.message}</Typography></TableCell>
                       </TableRow>
@@ -655,14 +665,14 @@ export default function MonitoringPage() {
           {bottomTab === 1 ? (
             <Stack spacing={1.5} sx={{ p: 2 }}>
               {!signals?.length ? (
-                <Typography color="text.secondary">No signals yet.</Typography>
+                <Typography color="text.secondary">아직 신호가 없습니다.</Typography>
               ) : (
                 signals.slice(0, 5).map((signal) => (
                   <Card key={signal.id} variant="outlined">
                     <Box sx={{ p: 1.5 }}>
-                      <Typography variant="body2" fontWeight={600}>{signal.symbol} · {signal.action}</Typography>
+                      <Typography variant="body2" fontWeight={600}>{signal.symbol} · {translateSignalAction(signal.action)}</Typography>
                       <Typography variant="caption" color="text.secondary" display="block">
-                        {signal.reason_codes.join(', ') || 'No explain facts'}
+                        {signal.reason_codes.join(', ') || '설명 정보 없음'}
                       </Typography>
                     </Box>
                   </Card>
@@ -676,21 +686,21 @@ export default function MonitoringPage() {
               <Table size="small">
                 <TableHead>
                   <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 11 } }}>
-                    <TableCell>Time</TableCell>
-                    <TableCell>Role</TableCell>
-                    <TableCell>State</TableCell>
-                    <TableCell align="right">Qty</TableCell>
+                    <TableCell>시간</TableCell>
+                    <TableCell>역할</TableCell>
+                    <TableCell>상태</TableCell>
+                    <TableCell align="right">수량</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {!orders?.length ? (
-                    <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><Typography color="text.secondary">No orders</Typography></TableCell></TableRow>
+                    <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><Typography color="text.secondary">주문이 없습니다</Typography></TableCell></TableRow>
                   ) : (
                     orders.map((order) => (
                       <TableRow key={order.id} hover>
-                        <TableCell><Typography variant="caption" color="text.secondary">{format(new Date(order.submitted_at), 'HH:mm:ss')}</Typography></TableCell>
-                        <TableCell><Typography variant="caption">{order.order_role}</Typography></TableCell>
-                        <TableCell><Typography variant="caption">{order.order_state}</Typography></TableCell>
+                        <TableCell><Typography variant="caption" color="text.secondary">{formatTime(order.submitted_at)}</Typography></TableCell>
+                        <TableCell><Typography variant="caption">{translateOrderRole(order.order_role)}</Typography></TableCell>
+                        <TableCell><Typography variant="caption">{translateOrderState(order.order_state)}</Typography></TableCell>
                         <TableCell align="right"><Typography variant="caption">{order.executed_qty}/{order.requested_qty}</Typography></TableCell>
                       </TableRow>
                     ))
@@ -703,7 +713,7 @@ export default function MonitoringPage() {
           {bottomTab === 3 ? (
             <Stack spacing={1.5} sx={{ p: 2 }}>
               {!riskEvents?.length ? (
-                <Typography color="text.secondary">No risk events.</Typography>
+                <Typography color="text.secondary">리스크 이벤트가 없습니다.</Typography>
               ) : (
                 riskEvents.map((event) => (
                   <Alert key={event.id} severity={event.severity === 'WARN' ? 'warning' : 'error'}>

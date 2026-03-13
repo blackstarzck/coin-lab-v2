@@ -12,6 +12,7 @@ import {
 } from '@mui/material'
 
 import { useRuntimeSettings, useRuntimeStatus, useRuntimeToggle } from '@/features/system/api'
+import { translateConnectionState } from '@/shared/lib/i18n'
 
 function StatusRow({ label, value }: { label: string, value: string }) {
   return (
@@ -46,9 +47,9 @@ export default function SettingsPage() {
     <Box sx={{ p: 3, display: 'flex', flexDirection: 'column', gap: 3 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
         <Box>
-          <Typography variant="h4" sx={{ fontWeight: 600 }}>Settings</Typography>
+          <Typography variant="h4" sx={{ fontWeight: 600 }}>설정</Typography>
           <Typography variant="body2" color="text.secondary">
-            Runtime and infrastructure settings are read-only in MVP and reflect the current backend state.
+            MVP에서는 런타임과 인프라 설정이 읽기 전용이며, 현재 백엔드 상태를 그대로 보여줍니다.
           </Typography>
         </Box>
         <Button
@@ -57,27 +58,27 @@ export default function SettingsPage() {
           onClick={() => runtimeToggle.mutate(!(runtimeStatus?.running ?? false))}
           disabled={runtimeToggle.isPending}
         >
-          {runtimeToggle.isPending ? 'Updating...' : runtimeStatus?.running ? 'Pause Runtime' : 'Start Runtime'}
+          {runtimeToggle.isPending ? '업데이트 중...' : runtimeStatus?.running ? '런타임 일시정지' : '런타임 시작'}
         </Button>
       </Box>
 
       <Stack direction="row" spacing={1.5} flexWrap="wrap" useFlexGap>
-        <Chip label={`Runtime ${runtimeStatus?.running ? 'ON' : 'OFF'}`} color={runtimeStatus?.running ? 'success' : 'default'} />
-        <Chip label={runtimeStatus?.connection_state ?? 'UNKNOWN'} color={runtimeStatus?.connection_state === 'CONNECTED' ? 'success' : 'warning'} variant="outlined" />
-        <Chip label={`${runtimeStatus?.running_session_count ?? 0} running sessions`} variant="outlined" />
-        <Chip label={`${runtimeStatus?.active_symbols.length ?? 0} active symbols`} variant="outlined" />
+        <Chip label={`런타임 ${runtimeStatus?.running ? '켜짐' : '꺼짐'}`} color={runtimeStatus?.running ? 'success' : 'default'} />
+        <Chip label={translateConnectionState(runtimeStatus?.connection_state ?? 'UNKNOWN')} color={runtimeStatus?.connection_state === 'CONNECTED' ? 'success' : 'warning'} variant="outlined" />
+        <Chip label={`실행 중 세션 ${runtimeStatus?.running_session_count ?? 0}개`} variant="outlined" />
+        <Chip label={`활성 심볼 ${(runtimeStatus?.active_symbols ?? []).length}개`} variant="outlined" />
       </Stack>
 
       <Grid container spacing={3}>
         <Grid item xs={12} md={6}>
           <Card sx={{ height: '100%' }}>
             <CardContent sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-              <Typography variant="h6">Upbit Connection</Typography>
-              <StatusRow label="REST Base URL" value={settings?.upbit.rest_base_url ?? '-'} />
-              <StatusRow label="Public WS URL" value={settings?.upbit.ws_public_url ?? '-'} />
-              <StatusRow label="Private WS URL" value={settings?.upbit.ws_private_url ?? '-'} />
-              <StatusRow label="Access Key" value={settings?.upbit.access_key_configured ? 'configured' : 'missing'} />
-              <StatusRow label="Secret Key" value={settings?.upbit.secret_key_configured ? 'configured' : 'missing'} />
+              <Typography variant="h6">업비트 연결</Typography>
+              <StatusRow label="REST 기본 URL" value={settings?.upbit.rest_base_url ?? '-'} />
+              <StatusRow label="공용 WS URL" value={settings?.upbit.ws_public_url ?? '-'} />
+              <StatusRow label="개인 WS URL" value={settings?.upbit.ws_private_url ?? '-'} />
+              <StatusRow label="액세스 키" value={settings?.upbit.access_key_configured ? '설정됨' : '없음'} />
+              <StatusRow label="시크릿 키" value={settings?.upbit.secret_key_configured ? '설정됨' : '없음'} />
             </CardContent>
           </Card>
         </Grid>
@@ -85,11 +86,11 @@ export default function SettingsPage() {
         <Grid item xs={12} md={6}>
           <Card sx={{ height: '100%' }}>
             <CardContent sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-              <Typography variant="h6">Storage</Typography>
-              <StatusRow label="Backend" value={settings?.storage.store_backend ?? '-'} />
-              <StatusRow label="Database URL" value={settings?.storage.database_configured ? 'configured' : 'missing'} />
-              <StatusRow label="Session Count" value={String(runtimeStatus?.session_count ?? 0)} />
-              <StatusRow label="Running Sessions" value={String(runtimeStatus?.running_session_count ?? 0)} />
+              <Typography variant="h6">저장소</Typography>
+              <StatusRow label="백엔드" value={settings?.storage.store_backend ?? '-'} />
+              <StatusRow label="데이터베이스 URL" value={settings?.storage.database_configured ? '설정됨' : '없음'} />
+              <StatusRow label="세션 수" value={String(runtimeStatus?.session_count ?? 0)} />
+              <StatusRow label="실행 중 세션" value={String(runtimeStatus?.running_session_count ?? 0)} />
             </CardContent>
           </Card>
         </Grid>
@@ -97,14 +98,14 @@ export default function SettingsPage() {
         <Grid item xs={12} md={6}>
           <Card sx={{ height: '100%' }}>
             <CardContent sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-              <Typography variant="h6">Live Protection</Typography>
-              <StatusRow label="Live Trading Enabled" value={settings?.live_protection.live_trading_enabled ? 'true' : 'false'} />
-              <StatusRow label="Order Test Required" value={settings?.live_protection.live_require_order_test ? 'true' : 'false'} />
-              <StatusRow label="Order Notional KRW" value={String(settings?.live_protection.live_order_notional_krw ?? 0)} />
+              <Typography variant="h6">실전 보호</Typography>
+              <StatusRow label="실전 거래 허용" value={settings?.live_protection.live_trading_enabled ? '예' : '아니오'} />
+              <StatusRow label="주문 테스트 필요" value={settings?.live_protection.live_require_order_test ? '예' : '아니오'} />
+              <StatusRow label="주문 기준 금액(KRW)" value={String(settings?.live_protection.live_order_notional_krw ?? 0)} />
               <Alert severity={settings?.live_protection.live_trading_enabled ? 'warning' : 'info'}>
                 {settings?.live_protection.live_trading_enabled
-                  ? 'LIVE mode can place real orders if the user explicitly starts a LIVE session.'
-                  : 'LIVE mode is currently blocked by backend policy.'}
+                  ? '사용자가 실전 세션을 명시적으로 시작하면 실제 주문이 실행될 수 있습니다.'
+                  : '현재 백엔드 정책에 따라 실전 모드는 차단되어 있습니다.'}
               </Alert>
             </CardContent>
           </Card>
@@ -113,11 +114,11 @@ export default function SettingsPage() {
         <Grid item xs={12} md={6}>
           <Card sx={{ height: '100%' }}>
             <CardContent sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-              <Typography variant="h6">Runtime</Typography>
-              <StatusRow label="Connection State" value={runtimeStatus?.connection_state ?? '-'} />
-              <StatusRow label="Reconnect Count (1h)" value={String(runtimeStatus?.reconnect_count_1h ?? 0)} />
-              <StatusRow label="Active Symbols" value={(runtimeStatus?.active_symbols ?? []).join(', ') || '-'} />
-              <StatusRow label="Store Backend" value={runtimeStatus?.store_backend ?? '-'} />
+              <Typography variant="h6">런타임</Typography>
+              <StatusRow label="연결 상태" value={translateConnectionState(runtimeStatus?.connection_state ?? '-')} />
+              <StatusRow label="재연결 횟수(1시간)" value={String(runtimeStatus?.reconnect_count_1h ?? 0)} />
+              <StatusRow label="활성 심볼" value={(runtimeStatus?.active_symbols ?? []).join(', ') || '-'} />
+              <StatusRow label="저장소 백엔드" value={runtimeStatus?.store_backend ?? '-'} />
             </CardContent>
           </Card>
         </Grid>
@@ -125,9 +126,9 @@ export default function SettingsPage() {
         <Grid item xs={12}>
           <Card>
             <CardContent>
-              <Typography variant="h6" gutterBottom>What This Page Covers</Typography>
+              <Typography variant="h6" gutterBottom>이 페이지에서 확인하는 항목</Typography>
               <Typography variant="body2" color="text.secondary">
-                MVP keeps Settings read-only. The page exposes current Upbit connectivity, storage mode, runtime state, and LIVE safety rails so operators can confirm the environment before launching PAPER or LIVE sessions.
+                설정 페이지는 현재 업비트 연결 상태, 저장소 모드, 런타임 상태, 실전 안전 장치를 보여줍니다. 운영자는 이를 통해 모의 세션이나 실전 세션을 시작하기 전에 환경을 점검할 수 있습니다.
               </Typography>
             </CardContent>
           </Card>

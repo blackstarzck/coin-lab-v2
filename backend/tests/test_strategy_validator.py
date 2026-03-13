@@ -315,3 +315,28 @@ def test_strict_mode_warning_without_watchlist() -> None:
     config["universe"] = universe
     result = StrategyValidator().validate(config, strict=True)
     assert "DSL_UNIVERSE_TOP_TURNOVER_ONLY" in _codes(_issues(result, "warnings"))
+
+
+def test_static_universe_with_symbols_is_valid() -> None:
+    config = _base_config()
+    universe = _section(config, "universe")
+    universe["mode"] = "static"
+    universe["symbols"] = ["KRW-BTC", "KRW-ETH"]
+    config["universe"] = universe
+
+    result = StrategyValidator().validate(config, strict=True)
+
+    assert result["valid"] is True
+    assert _issues(result, "errors") == []
+
+
+def test_static_universe_requires_symbols() -> None:
+    config = _base_config()
+    universe = _section(config, "universe")
+    universe["mode"] = "static"
+    universe["symbols"] = []
+    config["universe"] = universe
+
+    result = StrategyValidator().validate(config, strict=False)
+
+    assert "DSL_VALIDATION_FAILED" in _codes(_issues(result, "errors"))

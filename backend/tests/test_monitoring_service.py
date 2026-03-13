@@ -8,6 +8,7 @@ from app.core.config import Settings
 from app.domain.entities.session import RiskEvent, SessionStatus, Signal
 from app.infrastructure.repositories.in_memory_lab_store import InMemoryLabStore
 from app.schemas.session import SessionCreate
+from tests.support import populate_test_store
 
 
 def _settings() -> Settings:
@@ -30,7 +31,7 @@ def _settings() -> Settings:
 
 def test_monitoring_summary_reflects_validation_sessions_signals_and_risk() -> None:
     store = InMemoryLabStore()
-    store.seed_defaults()
+    populate_test_store(store)
     session_service = SessionService(store, _settings())
 
     paper_session = session_service.create_session(
@@ -109,9 +110,11 @@ def test_monitoring_summary_reflects_validation_sessions_signals_and_risk() -> N
     cards = {card["strategy_id"]: card for card in summary["strategy_cards"]}
     assert cards["stg_001"]["is_validated"] is True
     assert cards["stg_001"]["active_session_count"] == 1
+    assert cards["stg_001"]["last_7d_return_pct"] == 0.0
     assert cards["stg_001"]["last_signal_at"] == now
     assert cards["stg_002"]["is_validated"] is True
     assert cards["stg_002"]["active_session_count"] == 1
+    assert cards["stg_002"]["last_7d_return_pct"] == 0.0
 
     universe_symbols = {item["symbol"]: item for item in summary["universe_summary"]["symbols"]}
     assert universe_symbols["KRW-BTC"]["has_recent_signal"] is True

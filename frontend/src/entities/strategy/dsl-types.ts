@@ -157,10 +157,11 @@ export interface UniverseFilters {
 }
 
 export interface UniverseSection {
-  mode: 'dynamic';
-  sources: UniverseSource[];
-  max_symbols: number;
-  refresh_sec: number;
+  mode: 'dynamic' | 'static';
+  sources?: UniverseSource[];
+  symbols?: string[];
+  max_symbols?: number;
+  refresh_sec?: number;
   filters?: UniverseFilters;
 }
 

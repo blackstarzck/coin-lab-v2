@@ -25,7 +25,14 @@ import { Edit2, Play, ChevronDown, ChevronUp, ArrowLeft } from 'lucide-react'
 import { useStrategy, useStrategyVersions } from '@/features/strategies/api'
 import { useSessions } from '@/features/sessions/api'
 import { useBacktests } from '@/features/backtests/api'
-import { formatDistanceToNow, format } from 'date-fns'
+import {
+  formatDateTime,
+  formatRelativeTime,
+  translateBacktestStatus,
+  translateMode,
+  translateSessionStatus,
+  translateStrategyType,
+} from '@/shared/lib/i18n'
 
 export default function StrategyDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -50,8 +57,8 @@ export default function StrategyDetailPage() {
   if (!strategy) {
     return (
       <Box sx={{ textAlign: 'center', py: 8 }}>
-        <Typography variant="h5" color="text.secondary" mb={2}>Strategy not found</Typography>
-        <Button variant="contained" onClick={() => navigate('/strategies')}>Back to Strategies</Button>
+        <Typography variant="h5" color="text.secondary" mb={2}>전략을 찾을 수 없습니다</Typography>
+        <Button variant="contained" onClick={() => navigate('/strategies')}>전략 목록으로 돌아가기</Button>
       </Box>
     )
   }
@@ -81,7 +88,7 @@ export default function StrategyDetailPage() {
           <Stack direction="row" alignItems="center" spacing={2}>
             <Typography variant="h4">{strategy.name}</Typography>
             <Chip 
-              label={strategy.strategy_type.toUpperCase()} 
+              label={translateStrategyType(strategy.strategy_type)} 
               size="small" 
               color={getTypeColor(strategy.strategy_type)}
             />
@@ -96,7 +103,7 @@ export default function StrategyDetailPage() {
               }}
             >
               <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: 'currentColor' }} />
-              {strategy.is_active ? 'ACTIVE' : 'INACTIVE'}
+              {strategy.is_active ? '활성' : '비활성'}
             </Box>
           </Stack>
           <Typography variant="body2" color="text.tertiary" sx={{ mt: 0.5 }}>
@@ -108,7 +115,7 @@ export default function StrategyDetailPage() {
           startIcon={<Edit2 size={16} />}
           onClick={() => navigate(`/strategies/${strategy.id}/edit`)}
         >
-          Edit
+          편집
         </Button>
         <Button 
           variant="contained" 
@@ -116,7 +123,7 @@ export default function StrategyDetailPage() {
           startIcon={<Play size={16} />}
           onClick={() => navigate('/backtests')}
         >
-          Run Backtest
+          백테스트 실행
         </Button>
       </Box>
 
@@ -125,48 +132,48 @@ export default function StrategyDetailPage() {
           {/* Latest Version Summary */}
           <Card sx={{ mb: 3 }}>
             <CardContent>
-              <Typography variant="h6" mb={2}>Latest Version Summary</Typography>
+              <Typography variant="h6" mb={2}>최신 버전 요약</Typography>
               {latestVersion ? (
                 <Grid container spacing={2}>
                   <Grid item xs={6} sm={3}>
-                    <Typography variant="caption" color="text.tertiary">Version</Typography>
+                    <Typography variant="caption" color="text.tertiary">버전</Typography>
                     <Typography variant="body1">v{latestVersion.version_no}</Typography>
                   </Grid>
                   <Grid item xs={6} sm={3}>
-                    <Typography variant="caption" color="text.tertiary">Schema</Typography>
+                    <Typography variant="caption" color="text.tertiary">스키마</Typography>
                     <Typography variant="body1">{latestVersion.schema_version}</Typography>
                   </Grid>
                   <Grid item xs={6} sm={3}>
-                    <Typography variant="caption" color="text.tertiary">Config Hash</Typography>
+                    <Typography variant="caption" color="text.tertiary">설정 해시</Typography>
                     <Typography variant="body1" sx={{ fontFamily: 'monospace' }}>
                       {latestVersion.config_hash.substring(0, 8)}...
                     </Typography>
                   </Grid>
                   <Grid item xs={6} sm={3}>
-                    <Typography variant="caption" color="text.tertiary">Validated</Typography>
-                    <Typography variant="body1">{latestVersion.is_validated ? 'Yes' : 'No'}</Typography>
+                    <Typography variant="caption" color="text.tertiary">검증 완료</Typography>
+                    <Typography variant="body1">{latestVersion.is_validated ? '예' : '아니오'}</Typography>
                   </Grid>
                   <Grid item xs={6} sm={3}>
-                    <Typography variant="caption" color="text.tertiary">Created</Typography>
+                    <Typography variant="caption" color="text.tertiary">생성일</Typography>
                     <Typography variant="body1">
-                      {formatDistanceToNow(new Date(latestVersion.created_at), { addSuffix: true })}
+                      {formatRelativeTime(latestVersion.created_at)}
                     </Typography>
                   </Grid>
                   <Grid item xs={12}>
-                    <Typography variant="caption" color="text.tertiary">Labels</Typography>
+                    <Typography variant="caption" color="text.tertiary">라벨</Typography>
                     <Stack direction="row" spacing={1} mt={0.5}>
                       {latestVersion.labels.length > 0 ? (
                         latestVersion.labels.map(label => (
                           <Chip key={label} label={label} size="small" variant="outlined" />
                         ))
                       ) : (
-                        <Typography variant="body2" color="text.disabled">None</Typography>
+                        <Typography variant="body2" color="text.disabled">없음</Typography>
                       )}
                     </Stack>
                   </Grid>
                   {latestVersion.notes && (
                     <Grid item xs={12}>
-                      <Typography variant="caption" color="text.tertiary">Notes</Typography>
+                      <Typography variant="caption" color="text.tertiary">노트</Typography>
                       <Typography variant="body2" sx={{ mt: 0.5, p: 1.5, bgcolor: 'bg.surface2', borderRadius: 1 }}>
                         {latestVersion.notes}
                       </Typography>
@@ -174,7 +181,7 @@ export default function StrategyDetailPage() {
                   )}
                 </Grid>
               ) : (
-                <Typography color="text.secondary">No versions found.</Typography>
+                <Typography color="text.secondary">버전이 없습니다.</Typography>
               )}
             </CardContent>
           </Card>
@@ -193,7 +200,7 @@ export default function StrategyDetailPage() {
                 }}
                 onClick={() => setJsonExpanded(!jsonExpanded)}
               >
-                <Typography variant="h6">Configuration JSON</Typography>
+                <Typography variant="h6">설정 JSON</Typography>
                 <IconButton size="small">
                   {jsonExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
                 </IconButton>
@@ -212,16 +219,16 @@ export default function StrategyDetailPage() {
           {/* Version History */}
           <Card>
             <CardContent sx={{ pb: 0 }}>
-              <Typography variant="h6" mb={2}>Version History</Typography>
+              <Typography variant="h6" mb={2}>버전 이력</Typography>
             </CardContent>
             <TableContainer>
               <Table size="small">
                 <TableHead>
                   <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 12 } }}>
-                    <TableCell>Version</TableCell>
-                    <TableCell>Labels</TableCell>
-                    <TableCell>Notes</TableCell>
-                    <TableCell>Created</TableCell>
+                    <TableCell>버전</TableCell>
+                    <TableCell>라벨</TableCell>
+                    <TableCell>노트</TableCell>
+                    <TableCell>생성일</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -231,7 +238,7 @@ export default function StrategyDetailPage() {
                         <Typography variant="body2" fontWeight={v.version_no === strategy.latest_version_no ? 600 : 400}>
                           v{v.version_no}
                           {v.version_no === strategy.latest_version_no && (
-                            <Chip label="LATEST" size="small" color="primary" sx={{ ml: 1, height: 16, fontSize: 9 }} />
+                            <Chip label="최신" size="small" color="primary" sx={{ ml: 1, height: 16, fontSize: 9 }} />
                           )}
                         </Typography>
                       </TableCell>
@@ -252,7 +259,7 @@ export default function StrategyDetailPage() {
                       </TableCell>
                       <TableCell>
                         <Typography variant="body2" color="text.secondary">
-                          {format(new Date(v.created_at), 'MMM d, yyyy HH:mm')}
+                          {formatDateTime(v.created_at)}
                         </Typography>
                       </TableCell>
                     </TableRow>
@@ -260,7 +267,7 @@ export default function StrategyDetailPage() {
                   {!versions?.length && (
                     <TableRow>
                       <TableCell colSpan={4} align="center" sx={{ py: 3 }}>
-                        <Typography color="text.secondary">No version history</Typography>
+                        <Typography color="text.secondary">버전 이력이 없습니다</Typography>
                       </TableCell>
                     </TableRow>
                   )}
@@ -274,11 +281,11 @@ export default function StrategyDetailPage() {
           {/* Performance Card */}
           <Card sx={{ mb: 3 }}>
             <CardContent>
-              <Typography variant="h6" mb={2}>Performance</Typography>
+              <Typography variant="h6" mb={2}>성과</Typography>
               {strategy.last_7d_return_pct !== null ? (
                 <Grid container spacing={2}>
                   <Grid item xs={6}>
-                    <Typography variant="caption" color="text.tertiary">7d Return</Typography>
+                    <Typography variant="caption" color="text.tertiary">최근 7일 수익률</Typography>
                     <Typography 
                       variant="h5" 
                       sx={{ 
@@ -290,14 +297,14 @@ export default function StrategyDetailPage() {
                     </Typography>
                   </Grid>
                   <Grid item xs={6}>
-                    <Typography variant="caption" color="text.tertiary">Win Rate</Typography>
+                    <Typography variant="caption" color="text.tertiary">승률</Typography>
                     <Typography variant="h5" sx={{ fontVariantNumeric: 'tabular-nums' }}>
                       {strategy.last_7d_win_rate !== null ? `${(strategy.last_7d_win_rate * 100).toFixed(1)}%` : '-'}
                     </Typography>
                   </Grid>
                 </Grid>
               ) : (
-                <Typography color="text.secondary" variant="body2">No performance data available.</Typography>
+                <Typography color="text.secondary" variant="body2">성과 데이터가 없습니다.</Typography>
               )}
             </CardContent>
           </Card>
@@ -305,19 +312,19 @@ export default function StrategyDetailPage() {
           {/* Related Backtests */}
           <Card sx={{ mb: 3 }}>
             <CardContent>
-              <Typography variant="h6" mb={2}>Recent Backtests</Typography>
+              <Typography variant="h6" mb={2}>최근 백테스트</Typography>
               {relatedBacktests.length === 0 ? (
-                <Typography color="text.secondary" variant="body2">No backtests for this strategy.</Typography>
+                <Typography color="text.secondary" variant="body2">이 전략의 백테스트가 없습니다.</Typography>
               ) : (
                 <Stack spacing={1.5}>
                   {relatedBacktests.slice(0, 4).map((run) => (
                     <Box key={run.id} sx={{ p: 1.5, borderRadius: 1, bgcolor: 'bg.surface2' }}>
                       <Typography variant="body2" fontWeight={600}>{run.id.substring(0, 8)}</Typography>
                       <Typography variant="caption" color="text.secondary" display="block">
-                        {run.status} · {run.metrics?.trade_count ?? 0} trades
+                        {translateBacktestStatus(run.status)} · 거래 {run.metrics?.trade_count ?? 0}건
                       </Typography>
                       <Typography variant="caption" sx={{ color: (run.metrics?.total_return_pct ?? 0) >= 0 ? 'status.success' : 'status.danger' }}>
-                        {(run.metrics?.total_return_pct ?? 0).toFixed(2)}% return
+                        {(run.metrics?.total_return_pct ?? 0).toFixed(2)}% 수익률
                       </Typography>
                     </Box>
                   ))}
@@ -329,19 +336,19 @@ export default function StrategyDetailPage() {
           {/* Related Sessions */}
           <Card>
             <CardContent>
-              <Typography variant="h6" mb={2}>Active Sessions</Typography>
+              <Typography variant="h6" mb={2}>활성 세션</Typography>
               {relatedSessions.length === 0 ? (
-                <Typography color="text.secondary" variant="body2">No sessions for this strategy.</Typography>
+                <Typography color="text.secondary" variant="body2">이 전략의 세션이 없습니다.</Typography>
               ) : (
                 <Stack spacing={1.5}>
                   {relatedSessions.slice(0, 4).map((session) => (
                     <Box key={session.id} sx={{ p: 1.5, borderRadius: 1, bgcolor: 'bg.surface2' }}>
                       <Stack direction="row" justifyContent="space-between" alignItems="center">
                         <Typography variant="body2" fontWeight={600}>{session.id.substring(0, 8)}</Typography>
-                        <Chip label={session.mode} size="small" variant="outlined" />
+                        <Chip label={translateMode(session.mode)} size="small" variant="outlined" />
                       </Stack>
                       <Typography variant="caption" color="text.secondary" display="block">
-                        {session.status} · {(session.symbol_scope.active_symbols ?? []).length} active symbols
+                        {translateSessionStatus(session.status)} · 활성 심볼 {(session.symbol_scope.active_symbols ?? []).length}개
                       </Typography>
                     </Box>
                   ))}

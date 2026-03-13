@@ -7,6 +7,7 @@ from ...core.exceptions import NotFoundError
 from ...domain.entities.session import BacktestRun, BacktestTrade
 from ...infrastructure.repositories.lab_store import LabStore
 from ...schemas.backtest import BacktestRunRequest
+from .strategy_symbol_resolver import resolve_strategy_symbols
 
 
 def _now() -> datetime:
@@ -33,13 +34,13 @@ class BacktestService:
     def get_run(self, run_id: str) -> BacktestRun:
         run = self.store.get_backtest_run(run_id)
         if run is None:
-            raise NotFoundError("Backtest run not found", {"run_id": run_id})
+            raise NotFoundError("백테스트 실행을 찾을 수 없습니다", {"run_id": run_id})
         return run
 
     def create_run(self, data: BacktestRunRequest) -> BacktestRun:
         strategy_version = self.store.get_strategy_version(data.strategy_version_id)
         if strategy_version is None:
-            raise NotFoundError("Strategy version not found", {"strategy_version_id": data.strategy_version_id})
+            raise NotFoundError("전략 버전을 찾을 수 없습니다", {"strategy_version_id": data.strategy_version_id})
 
         backtest_config = strategy_version.config_json.get("backtest", {})
         initial_capital = 1000000
@@ -48,11 +49,21 @@ class BacktestService:
             if isinstance(capital_value, (int, float)):
                 initial_capital = float(capital_value)
 
+        symbols = resolve_strategy_symbols(
+            data.symbols,
+            strategy_version.config_json,
+            (
+                str(item.get("symbol"))
+                for item in self.store.get_current_universe()
+                if isinstance(item, dict) and item.get("symbol")
+            ),
+        )
+
         run = BacktestRun(
             id=f"btr_{uuid4().hex[:12]}",
             status="QUEUED",
             strategy_version_id=data.strategy_version_id,
-            symbols=data.symbols,
+            symbols=symbols,
             timeframes=data.timeframes,
             date_from=_normalize_dt(data.date_from),
             date_to=_normalize_dt(data.date_to),

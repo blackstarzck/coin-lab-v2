@@ -1,4 +1,8 @@
 import { createTheme } from '@mui/material/styles'
+import freesentationRegular from '@/assets/fonts/Freesentation-4Regular.ttf'
+import freesentationMedium from '@/assets/fonts/Freesentation-5Medium.ttf'
+import freesentationSemiBold from '@/assets/fonts/Freesentation-6SemiBold.ttf'
+import freesentationBold from '@/assets/fonts/Freesentation-7Bold.ttf'
 
 // Define custom colors in the theme
 declare module '@mui/material/styles' {
@@ -135,6 +139,8 @@ const colors = {
   },
 }
 
+const appFontFamily = '"Freesentation", "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif'
+
 export const theme = createTheme({
   palette: {
     mode: 'dark',
@@ -183,7 +189,7 @@ export const theme = createTheme({
   bg: colors.bg,
   border: colors.border,
   typography: {
-    fontFamily: '"Inter", "Pretendard", "SF Pro Display", sans-serif',
+    fontFamily: appFontFamily,
     h1: { fontSize: 32, fontWeight: 700, lineHeight: 40 / 32 },
     h2: { fontSize: 28, fontWeight: 700, lineHeight: 36 / 28 },
     h3: { fontSize: 24, fontWeight: 600, lineHeight: 32 / 24 },
@@ -201,10 +207,46 @@ export const theme = createTheme({
   components: {
     MuiCssBaseline: {
       styleOverrides: {
+        '@font-face': [
+          {
+            fontFamily: 'Freesentation',
+            src: `url(${freesentationRegular}) format('truetype')`,
+            fontWeight: 400,
+            fontStyle: 'normal',
+            fontDisplay: 'swap',
+          },
+          {
+            fontFamily: 'Freesentation',
+            src: `url(${freesentationMedium}) format('truetype')`,
+            fontWeight: 500,
+            fontStyle: 'normal',
+            fontDisplay: 'swap',
+          },
+          {
+            fontFamily: 'Freesentation',
+            src: `url(${freesentationSemiBold}) format('truetype')`,
+            fontWeight: 600,
+            fontStyle: 'normal',
+            fontDisplay: 'swap',
+          },
+          {
+            fontFamily: 'Freesentation',
+            src: `url(${freesentationBold}) format('truetype')`,
+            fontWeight: 700,
+            fontStyle: 'normal',
+            fontDisplay: 'swap',
+          },
+        ],
+        html: {
+          fontFamily: appFontFamily,
+        },
         body: {
           backgroundColor: colors.bg.canvas,
           color: colors.text.primary,
-          fontFamily: '"Inter", "Pretendard", "SF Pro Display", sans-serif',
+          fontFamily: appFontFamily,
+        },
+        'input, button, textarea, select': {
+          fontFamily: appFontFamily,
         },
         '*': {
           boxSizing: 'border-box',

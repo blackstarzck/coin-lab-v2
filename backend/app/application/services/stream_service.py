@@ -8,6 +8,7 @@ from typing import Any
 
 from ...domain.entities.market import MarketSnapshot
 from ...infrastructure.repositories.lab_store import LabStore
+from .monitoring_service import MonitoringService
 
 
 def _queue_put_latest(queue: asyncio.Queue[dict[str, object]], payload: dict[str, object]) -> None:
@@ -35,6 +36,7 @@ def _dispatch_queue(
 class StreamService:
     def __init__(self, store: LabStore) -> None:
         self.store = store
+        self._monitoring_service = MonitoringService(store)
         self._lock = threading.RLock()
         self._chart_history: dict[tuple[str, str], deque[dict[str, object]]] = defaultdict(lambda: deque(maxlen=400))
         self._monitoring_subscribers: dict[asyncio.Queue[dict[str, object]], asyncio.AbstractEventLoop] = {}
@@ -53,41 +55,7 @@ class StreamService:
         self.publish_monitoring_snapshot(force=True)
 
     def monitoring_snapshot(self) -> dict[str, object]:
-        sessions = self.store.list_sessions()
-        with self._lock:
-            connection_state = self.connection_state
-            reconnect_count_1h = self.reconnect_count_1h
-        running = [session for session in sessions if session.status.value == "RUNNING"]
-        paper = [session for session in running if session.mode.value == "PAPER"]
-        live = [session for session in running if session.mode.value == "LIVE"]
-        failed = [session for session in sessions if session.status.value == "FAILED"]
-        degraded = [
-            session
-            for session in running
-            if str(session.health_json.get("connection_state", connection_state)).upper()
-            in {"DEGRADED", "DISCONNECTED", "RECONNECTING"}
-            or str(session.health_json.get("snapshot_consistency", "HEALTHY")).upper() != "HEALTHY"
-        ]
-        active_symbols = {
-            str(symbol)
-            for session in running
-            for symbol in session.symbol_scope_json.get("active_symbols", [])
-            if isinstance(symbol, str)
-        }
-        return {
-            "status_bar": {
-                "running_session_count": len(running),
-                "paper_session_count": len(paper),
-                "live_session_count": len(live),
-                "failed_session_count": len(failed),
-                "degraded_session_count": len(degraded),
-                "active_symbol_count": len(active_symbols),
-            },
-            "runtime": {
-                "connection_state": connection_state,
-                "reconnect_count_1h": reconnect_count_1h,
-            },
-        }
+        return self._monitoring_service.get_summary()
 
     def chart_snapshot(self, symbol: str, timeframe: str, limit: int = 200) -> dict[str, object]:
         with self._lock:
@@ -125,8 +93,6 @@ class StreamService:
             }
             for queue, loop in subscribers:
                 _dispatch_queue(loop, queue, payload)
-
-        self.publish_monitoring_snapshot()
 
     def publish_monitoring_snapshot(self, force: bool = False) -> None:
         now = datetime.now(UTC)

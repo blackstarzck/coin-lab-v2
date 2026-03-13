@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 from ...domain.entities.session import PositionState, Session
 from ...infrastructure.repositories.lab_store import LabStore
+from .strategy_performance import StrategyPerformanceSnapshot, build_strategy_performance_map
 
 
 class MonitoringService:
@@ -48,6 +49,7 @@ class MonitoringService:
             version.id: version
             for version in self.store.list_strategy_versions_by_ids(version_ids)
         }
+        performance_by_strategy = build_strategy_performance_map(sessions, list(version_cache.values()))
 
         active_symbols_by_session = {session.id: self._active_symbols(session) for session in running}
         active_symbols = sorted({symbol for symbols in active_symbols_by_session.values() for symbol in symbols})
@@ -75,7 +77,13 @@ class MonitoringService:
                 "degraded_session_count": len(degraded),
                 "active_symbol_count": len(active_symbols),
             },
-            "strategy_cards": self._strategy_cards(strategies, running, version_cache, signals_by_session),
+            "strategy_cards": self._strategy_cards(
+                strategies,
+                running,
+                version_cache,
+                signals_by_session,
+                performance_by_strategy,
+            ),
             "universe_summary": {
                 "active_symbol_count": len(active_symbols),
                 "watchlist_symbol_count": sum(1 for item in universe_rows if not bool(item.get("selected", True))),
@@ -108,6 +116,7 @@ class MonitoringService:
                 ),
                 "items": [
                     {
+                        "id": event.id,
                         "session_id": event.session_id,
                         "severity": event.severity,
                         "code": event.code,
@@ -148,6 +157,7 @@ class MonitoringService:
         running_sessions: list[Session],
         version_cache: dict[str, object],
         signals_by_session: dict[str, list[object]],
+        performance_by_strategy: dict[str, StrategyPerformanceSnapshot],
     ) -> list[dict[str, object]]:
         cards: list[dict[str, object]] = []
         for strategy in strategies:
@@ -165,6 +175,7 @@ class MonitoringService:
                 for signal in signals_by_session.get(session.id, [])
             ]
             latest_version = version_cache.get(strategy.latest_version_id) if strategy.latest_version_id else None
+            performance = performance_by_strategy.get(strategy.id)
             cards.append(
                 {
                     "strategy_id": strategy.id,
@@ -176,7 +187,7 @@ class MonitoringService:
                     "is_active": strategy.is_active,
                     "is_validated": bool(getattr(latest_version, "is_validated", False)),
                     "active_session_count": len(strategy_sessions),
-                    "last_7d_return_pct": strategy.last_7d_return_pct,
+                    "last_7d_return_pct": performance.last_7d_return_pct if performance is not None else None,
                     "last_signal_at": max((signal.snapshot_time for signal in strategy_signals), default=None),
                 }
             )

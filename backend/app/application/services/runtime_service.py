@@ -133,6 +133,7 @@ class RuntimeService:
         if snapshot is not None:
             self.stream_service.record_snapshot(snapshot)
             self._evaluate_sessions_for_snapshot(snapshot)
+            self.stream_service.publish_monitoring_snapshot()
 
         if not bool(result.get("accepted", False)):
             self._mark_late_events(event.symbol)
@@ -255,7 +256,7 @@ class RuntimeService:
                         channel="strategy-execution",
                         level="INFO",
                         event_type="SIGNAL_EVALUATED",
-                        message="Strategy signal evaluated",
+                        message="전략 신호를 평가했습니다",
                         payload={
                             "symbol": signal.symbol,
                             "reason_codes": signal.reason_codes,
@@ -282,7 +283,7 @@ class RuntimeService:
                         severity="WARN",
                         code=str(code),
                         symbol=snapshot.symbol,
-                        message=f"Risk blocked signal for {snapshot.symbol}",
+                        message=f"{snapshot.symbol} 신호가 리스크 규칙에 의해 차단되었습니다",
                         payload_preview={"blocked_codes": blocked_codes},
                         created_at=datetime.now(UTC),
                     )
@@ -313,7 +314,7 @@ class RuntimeService:
                     channel="order-simulation",
                     level="INFO",
                     event_type="ORDER_FILLED" if order.order_state == OrderState.FILLED else "ORDER_CREATED",
-                    message=f"{order.order_role} order {order.order_state.value.lower()}",
+                    message=f"{order.order_role} 주문 상태: {order.order_state.value.lower()}",
                     payload={
                         "requested_qty": order.requested_qty,
                         "executed_qty": order.executed_qty,
@@ -365,7 +366,7 @@ class RuntimeService:
                             channel="order-simulation",
                             level="INFO",
                             event_type="EXIT_FILLED",
-                            message=f"Exit filled via {exit_reason}",
+                            message=f"{exit_reason} 사유로 청산이 체결되었습니다",
                             payload={"exit_reason": exit_reason},
                             logged_at=datetime.now(UTC),
                             session_id=session.id,

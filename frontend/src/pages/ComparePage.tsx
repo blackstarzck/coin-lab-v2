@@ -17,6 +17,7 @@ import {
 import { AlertCircle } from 'lucide-react'
 
 import { useBacktests } from '@/features/backtests/api'
+import { translateBacktestStatus } from '@/shared/lib/i18n'
 
 export default function ComparePage() {
   const { data: backtests, isLoading } = useBacktests()
@@ -36,11 +37,11 @@ export default function ComparePage() {
 
   return (
     <Box sx={{ p: 3, display: 'flex', flexDirection: 'column', gap: 3 }}>
-      <Typography variant="h4" sx={{ fontWeight: 600 }}>Compare Backtests</Typography>
+      <Typography variant="h4" sx={{ fontWeight: 600 }}>백테스트 비교</Typography>
 
       <Card>
         <CardContent>
-          <Typography variant="h6" gutterBottom>Select Backtest Runs to Compare (Max 4)</Typography>
+          <Typography variant="h6" gutterBottom>비교할 백테스트 실행 선택 (최대 4개)</Typography>
           {isLoading ? (
             <Skeleton variant="rectangular" height={100} />
           ) : (
@@ -55,11 +56,11 @@ export default function ComparePage() {
                       disabled={!selectedRunIds.includes(run.id) && selectedRunIds.length >= 4}
                     />
                   )}
-                  label={`${run.id.substring(0, 8)} · ${run.strategy_version_id.substring(0, 8)} · ${run.status}`}
+                  label={`${run.id.substring(0, 8)} · ${run.strategy_version_id.substring(0, 8)} · ${translateBacktestStatus(run.status)}`}
                 />
               ))}
               {(!backtests || backtests.length === 0) ? (
-                <Typography color="text.secondary">No backtest runs available.</Typography>
+                <Typography color="text.secondary">사용 가능한 백테스트 실행이 없습니다.</Typography>
               ) : null}
             </FormGroup>
           )}
@@ -71,7 +72,7 @@ export default function ComparePage() {
           <CardContent sx={{ py: 8, textAlign: 'center' }}>
             <AlertCircle size={48} style={{ margin: '0 auto', opacity: 0.5, marginBottom: 16 }} />
             <Typography variant="h6" color="text.secondary">
-              Select 2 or more backtest runs above to compare performance.
+              위에서 백테스트 실행 2개 이상을 선택하면 성과를 비교할 수 있습니다.
             </Typography>
           </CardContent>
         </Card>
@@ -80,7 +81,7 @@ export default function ComparePage() {
           <Table>
             <TableHead>
               <TableRow>
-                <TableCell sx={{ color: 'text.tertiary', fontWeight: 600 }}>Metric</TableCell>
+                <TableCell sx={{ color: 'text.tertiary', fontWeight: 600 }}>지표</TableCell>
                 {selectedRuns.map((run) => (
                   <TableCell key={run.id} align="right" sx={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
                     {run.id.substring(0, 8)}
@@ -90,7 +91,7 @@ export default function ComparePage() {
             </TableHead>
             <TableBody>
               <TableRow hover>
-                <TableCell sx={{ color: 'text.secondary' }}>Total Return %</TableCell>
+                <TableCell sx={{ color: 'text.secondary' }}>총 수익률 %</TableCell>
                 {selectedRuns.map((run) => (
                   <TableCell key={run.id} align="right" sx={{ color: (run.metrics?.total_return_pct ?? 0) >= 0 ? 'status.success' : 'status.danger' }}>
                     {(run.metrics?.total_return_pct ?? 0).toFixed(2)}%
@@ -98,7 +99,7 @@ export default function ComparePage() {
                 ))}
               </TableRow>
               <TableRow hover>
-                <TableCell sx={{ color: 'text.secondary' }}>Max Drawdown %</TableCell>
+                <TableCell sx={{ color: 'text.secondary' }}>최대 낙폭 %</TableCell>
                 {selectedRuns.map((run) => (
                   <TableCell key={run.id} align="right" sx={{ color: 'status.danger' }}>
                     {(run.metrics?.max_drawdown_pct ?? 0).toFixed(2)}%
@@ -106,7 +107,7 @@ export default function ComparePage() {
                 ))}
               </TableRow>
               <TableRow hover>
-                <TableCell sx={{ color: 'text.secondary' }}>Win Rate %</TableCell>
+                <TableCell sx={{ color: 'text.secondary' }}>승률 %</TableCell>
                 {selectedRuns.map((run) => (
                   <TableCell key={run.id} align="right">
                     {(run.metrics?.win_rate_pct ?? 0).toFixed(2)}%
@@ -114,7 +115,7 @@ export default function ComparePage() {
                 ))}
               </TableRow>
               <TableRow hover>
-                <TableCell sx={{ color: 'text.secondary' }}>Profit Factor</TableCell>
+                <TableCell sx={{ color: 'text.secondary' }}>손익비</TableCell>
                 {selectedRuns.map((run) => (
                   <TableCell key={run.id} align="right">
                     {(run.metrics?.profit_factor ?? 0).toFixed(2)}
@@ -122,7 +123,7 @@ export default function ComparePage() {
                 ))}
               </TableRow>
               <TableRow hover>
-                <TableCell sx={{ color: 'text.secondary' }}>Trade Count</TableCell>
+                <TableCell sx={{ color: 'text.secondary' }}>거래 수</TableCell>
                 {selectedRuns.map((run) => (
                   <TableCell key={run.id} align="right">
                     {run.metrics?.trade_count ?? 0}

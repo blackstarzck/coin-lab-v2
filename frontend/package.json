@@ -19,6 +19,7 @@
     "date-fns": "^4.1.0",
     "lightweight-charts": "^5.1.0",
     "lucide-react": "^0.577.0",
+    "odometer": "^0.4.8",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.13.1",

@@ -1,323 +1,361 @@
-import { useMemo } from 'react'
+import { type ReactNode, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Box,
-  Typography,
+  ButtonBase,
   Card,
   CardContent,
+  Chip,
   Grid,
+  Skeleton,
+  Stack,
   Table,
   TableBody,
   TableCell,
   TableContainer,
   TableHead,
   TableRow,
-  Chip,
-  Skeleton,
-  Stack
+  Typography,
 } from '@mui/material'
-import { Activity, AlertTriangle, CheckCircle2, Clock, PlayCircle, XCircle } from 'lucide-react'
+import { Activity, AlertTriangle, CheckCircle2, Clock, PlayCircle, Radio, XCircle } from 'lucide-react'
 import { useMonitoringSummary } from '@/features/monitoring/api'
-import { formatDistanceToNow, format } from 'date-fns'
+import { useMonitoringSummaryStream } from '@/features/monitoring/useMonitoringSummaryStream'
+import { formatRelativeTime, formatTime, translateSeverity, translateSignalAction, translateStrategyType } from '@/shared/lib/i18n'
+import { AnimatedOdometer } from '@/shared/ui/AnimatedOdometer'
+import { useAnimatedTableRows } from '@/shared/ui/useAnimatedTableRows'
 
 export default function DashboardPage() {
   const navigate = useNavigate()
   const { data: summary, isLoading } = useMonitoringSummary()
+  const { isConnected } = useMonitoringSummaryStream()
 
   const totalRealizedPnl = useMemo(() => {
-    if (!summary?.strategy_cards) return 0
-    return summary.strategy_cards.reduce((sum, card) => sum + (card.last_7d_return_pct || 0), 0)
-  }, [summary])
+    const returns = summary?.strategy_cards
+      ?.map((card) => card.last_7d_return_pct)
+      .filter((value): value is number => value !== null)
+
+    if (!returns?.length) {
+      return null
+    }
+
+    return returns.reduce((sum, value) => sum + value, 0)
+  }, [summary?.strategy_cards])
+
+  const riskRowIds = useMemo(
+    () => summary?.risk_overview.items.map((item) => item.id) ?? [],
+    [summary?.risk_overview.items],
+  )
+  const signalRowIds = useMemo(
+    () => summary?.recent_signals.map((item) => item.id) ?? [],
+    [summary?.recent_signals],
+  )
+  const { setRowRef: setRiskRowRef } = useAnimatedTableRows(riskRowIds)
+  const { setRowRef: setSignalRowRef } = useAnimatedTableRows(signalRowIds)
 
   const getSeverityColor = (severity: string) => {
     switch (severity.toUpperCase()) {
-      case 'CRITICAL': return 'error'
-      case 'HIGH': return 'error'
-      case 'MEDIUM': return 'warning'
-      case 'LOW': return 'info'
-      default: return 'default'
+      case 'CRITICAL':
+      case 'HIGH':
+        return 'error'
+      case 'MEDIUM':
+        return 'warning'
+      case 'LOW':
+        return 'info'
+      default:
+        return 'default'
     }
   }
 
-  const getActionColor = (action: string) => {
-    return action === 'ENTER' ? 'success' : 'error'
-  }
+  const getActionColor = (action: string) => (action === 'ENTER' ? 'success' : 'error')
 
-  if (isLoading) {
+  if (isLoading && summary === undefined) {
     return (
       <Box sx={{ p: 3 }}>
-        <Typography variant="h4" sx={{ mb: 3 }}>Dashboard</Typography>
+        <Typography variant="h4" sx={{ mb: 3 }}>
+          대시보드
+        </Typography>
         <Grid container spacing={2} sx={{ mb: 4 }}>
-          {Array.from(new Array(6)).map((_, i) => (
-            <Grid item xs={6} sm={4} md={2} key={i}>
-              <Skeleton variant="rounded" height={40} />
+          {Array.from({ length: 4 }).map((_, index) => (
+            <Grid item xs={12} sm={6} md={3} key={index}>
+              <Skeleton variant="rounded" height={112} />
             </Grid>
           ))}
         </Grid>
         <Grid container spacing={3} sx={{ mb: 4 }}>
-          {Array.from(new Array(4)).map((_, i) => (
-            <Grid item xs={12} sm={6} md={3} key={i}>
-              <Skeleton variant="rounded" height={100} />
+          {Array.from({ length: 2 }).map((_, index) => (
+            <Grid item xs={12} md={6} key={index}>
+              <Skeleton variant="rounded" height={240} />
             </Grid>
           ))}
         </Grid>
         <Grid container spacing={3}>
           <Grid item xs={12} md={6}>
-            <Skeleton variant="rounded" height={400} />
+            <Skeleton variant="rounded" height={420} />
           </Grid>
           <Grid item xs={12} md={6}>
-            <Skeleton variant="rounded" height={400} />
+            <Skeleton variant="rounded" height={420} />
           </Grid>
         </Grid>
       </Box>
     )
   }
 
+  const statusBar = summary?.status_bar
+  const strategyCards = summary?.strategy_cards ?? []
+  const activeStrategyCards = strategyCards.filter((strategy) => strategy.active_session_count > 0)
+  const riskItems = summary?.risk_overview.items ?? []
+  const recentSignals = summary?.recent_signals ?? []
+
   return (
     <Box sx={{ p: 3 }}>
-      <Typography variant="h4" sx={{ mb: 3 }}>Dashboard</Typography>
-      
-      {/* Status Bar Row */}
-      <Stack direction="row" spacing={2} sx={{ mb: 4, flexWrap: 'wrap', gap: 2 }}>
-        <Chip 
-          icon={<PlayCircle size={16} />} 
-          label={`${summary?.status_bar.running_session_count || 0} Running`} 
-          color="success" 
-          variant="outlined" 
-        />
-        <Chip 
-          icon={<Activity size={16} />} 
-          label={`${summary?.status_bar.paper_session_count || 0} Paper`} 
-          color="info" 
-          variant="outlined" 
-        />
-        <Chip 
-          icon={<Activity size={16} />} 
-          label={`${summary?.status_bar.live_session_count || 0} Live`} 
-          color="error" 
-          variant="outlined" 
-        />
-        <Chip 
-          icon={<XCircle size={16} />} 
-          label={`${summary?.status_bar.failed_session_count || 0} Failed`} 
-          color="error" 
-          variant="outlined" 
-        />
-        <Chip 
-          icon={<AlertTriangle size={16} />} 
-          label={`${summary?.status_bar.degraded_session_count || 0} Degraded`} 
-          color="warning" 
-          variant="outlined" 
-        />
-        <Chip 
-          icon={<CheckCircle2 size={16} />} 
-          label={`${summary?.status_bar.active_symbol_count || 0} Active Symbols`} 
-          color="default" 
-          variant="outlined" 
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        spacing={1.5}
+        alignItems={{ xs: 'flex-start', sm: 'center' }}
+        justifyContent="space-between"
+        sx={{ mb: 3 }}
+      >
+        <Typography variant="h4">대시보드</Typography>
+        <Chip
+          icon={<Radio size={14} />}
+          label={isConnected ? '실시간 연결' : '재연결 중'}
+          color={isConnected ? 'success' : 'warning'}
+          variant="outlined"
         />
       </Stack>
 
-      {/* KPI Cards Row */}
+      <Stack direction="row" spacing={2} sx={{ mb: 4, flexWrap: 'wrap', gap: 2 }}>
+        <Chip icon={<PlayCircle size={16} />} label={`실행 중 ${statusBar?.running_session_count ?? 0}개`} color="success" variant="outlined" />
+        <Chip icon={<Activity size={16} />} label={`모의 ${statusBar?.paper_session_count ?? 0}개`} color="info" variant="outlined" />
+        <Chip icon={<Activity size={16} />} label={`실전 ${statusBar?.live_session_count ?? 0}개`} color="error" variant="outlined" />
+        <Chip icon={<XCircle size={16} />} label={`실패 ${statusBar?.failed_session_count ?? 0}개`} color="error" variant="outlined" />
+        <Chip icon={<AlertTriangle size={16} />} label={`성능 저하 ${statusBar?.degraded_session_count ?? 0}개`} color="warning" variant="outlined" />
+        <Chip icon={<CheckCircle2 size={16} />} label={`활성 심볼 ${statusBar?.active_symbol_count ?? 0}개`} color="default" variant="outlined" />
+      </Stack>
+
       <Grid container spacing={3} sx={{ mb: 4 }}>
         <Grid item xs={12} sm={6} md={3}>
-          <Card>
-            <CardContent>
-              <Typography color="text.secondary" gutterBottom variant="body2">
-                Running Sessions
-              </Typography>
-              <Typography variant="h4" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                {summary?.status_bar.running_session_count || 0}
-              </Typography>
-            </CardContent>
-          </Card>
+          <MetricCard
+            label="실행 중 세션"
+            color="text.primary"
+            value={<AnimatedOdometer value={statusBar?.running_session_count ?? 0} />}
+          />
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
-          <Card>
-            <CardContent>
-              <Typography color="text.secondary" gutterBottom variant="body2">
-                Active Symbols
-              </Typography>
-              <Typography variant="h4" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                {summary?.status_bar.active_symbol_count || 0}
-              </Typography>
-            </CardContent>
-          </Card>
+          <MetricCard
+            label="활성 심볼"
+            color="text.primary"
+            value={<AnimatedOdometer value={statusBar?.active_symbol_count ?? 0} />}
+          />
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
-          <Card>
-            <CardContent>
-              <Typography color="text.secondary" gutterBottom variant="body2">
-                Total 7d Return (Sum)
-              </Typography>
-              <Typography 
-                variant="h4" 
-                sx={{ 
-                  color: totalRealizedPnl >= 0 ? 'status.success' : 'status.danger',
-                  fontVariantNumeric: 'tabular-nums' 
-                }}
-              >
-                {totalRealizedPnl > 0 ? '+' : ''}{totalRealizedPnl.toFixed(2)}%
-              </Typography>
-            </CardContent>
-          </Card>
+          <MetricCard
+            label="최근 7일 수익률 합계"
+            color={totalRealizedPnl === null ? 'text.disabled' : totalRealizedPnl >= 0 ? 'status.success' : 'status.danger'}
+            value={
+              totalRealizedPnl === null ? (
+                <Typography variant="body2" color="text.disabled">
+                  데이터 없음
+                </Typography>
+              ) : (
+                <AnimatedOdometer value={totalRealizedPnl} precision={2} suffix="%" showPositiveSign />
+              )
+            }
+          />
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
-          <Card>
-            <CardContent>
-              <Typography color="text.secondary" gutterBottom variant="body2">
-                Risk Alerts
-              </Typography>
-              <Typography 
-                variant="h4" 
-                sx={{ 
-                  color: (summary?.risk_overview.active_alert_count || 0) > 0 ? 'status.danger' : 'text.primary',
-                  fontVariantNumeric: 'tabular-nums' 
-                }}
-              >
-                {summary?.risk_overview.active_alert_count || 0}
-              </Typography>
-            </CardContent>
-          </Card>
+          <MetricCard
+            label="리스크 알림"
+            color={(summary?.risk_overview.active_alert_count ?? 0) > 0 ? 'status.danger' : 'text.primary'}
+            value={<AnimatedOdometer value={summary?.risk_overview.active_alert_count ?? 0} />}
+          />
         </Grid>
       </Grid>
 
-      {/* Strategy Summary Cards */}
-      <Typography variant="h6" sx={{ mb: 2 }}>Active Strategies</Typography>
+      <Typography variant="h6" sx={{ mb: 2 }}>
+        활성 전략
+      </Typography>
       <Grid container spacing={3} sx={{ mb: 4 }}>
-        {summary?.strategy_cards.length === 0 ? (
+        {activeStrategyCards.length === 0 ? (
           <Grid item xs={12}>
             <Card>
               <CardContent sx={{ py: 4, textAlign: 'center' }}>
-                <Typography color="text.secondary">No active strategies. Start a session to see data here.</Typography>
+                <Typography color="text.secondary">
+                  활성 전략이 없습니다. 세션을 시작하면 여기에 데이터가 표시됩니다.
+                </Typography>
               </CardContent>
             </Card>
           </Grid>
         ) : (
-          summary?.strategy_cards.map((strategy) => (
+          activeStrategyCards.map((strategy) => (
             <Grid item xs={12} sm={6} md={4} lg={3} key={strategy.strategy_id}>
-              <Card 
-                sx={{ cursor: 'pointer', '&:hover': { bgcolor: 'rgba(255,255,255,0.02)' } }}
+              <ButtonBase
                 onClick={() => navigate(`/strategies/${strategy.strategy_id}`)}
+                sx={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'left',
+                  borderRadius: 3,
+                }}
               >
-                <CardContent>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
-                    <Box>
-                      <Typography variant="subtitle1" fontWeight={600} noWrap title={strategy.strategy_name}>
-                        {strategy.strategy_name}
-                      </Typography>
-                      <Typography variant="caption" color="text.tertiary">
-                        v{strategy.latest_version_no}
-                      </Typography>
-                    </Box>
-                    <Box 
-                      sx={{ 
-                        width: 8, 
-                        height: 8, 
-                        borderRadius: '50%', 
-                        bgcolor: strategy.is_active ? 'status.success' : 'text.disabled',
-                        mt: 1
-                      }} 
-                    />
-                  </Box>
-                  
-                  <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
-                    <Chip 
-                      label={strategy.strategy_type.toUpperCase()} 
-                      size="small" 
-                      variant="outlined"
-                      sx={{ fontSize: 10, height: 20 }}
-                    />
-                    <Chip 
-                      icon={<PlayCircle size={12} />}
-                      label={`${strategy.active_session_count} Sessions`} 
-                      size="small" 
-                      variant="outlined"
-                      sx={{ fontSize: 10, height: 20 }}
-                    />
-                  </Stack>
-
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-                    <Box>
-                      <Typography variant="caption" color="text.secondary" display="block">
-                        7d Return
-                      </Typography>
-                      <Typography 
-                        variant="body1" 
-                        fontWeight={600}
-                        sx={{ 
-                          color: strategy.last_7d_return_pct >= 0 ? 'status.success' : 'status.danger',
-                          fontVariantNumeric: 'tabular-nums'
+                <Card
+                  sx={{
+                    width: '100%',
+                    transition: 'transform 180ms ease, box-shadow 180ms ease',
+                    '&:hover': {
+                      transform: 'translateY(-2px)',
+                      boxShadow: 6,
+                    },
+                  }}
+                >
+                  <CardContent>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+                      <Box>
+                        <Typography variant="subtitle1" fontWeight={600} noWrap title={strategy.strategy_name}>
+                          {strategy.strategy_name}
+                        </Typography>
+                        <Typography variant="caption" color="text.tertiary">
+                          v{strategy.latest_version_no}
+                        </Typography>
+                      </Box>
+                      <Box
+                        sx={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: '50%',
+                          bgcolor: strategy.is_active ? 'status.success' : 'text.disabled',
+                          mt: 1,
                         }}
-                      >
-                        {strategy.last_7d_return_pct > 0 ? '+' : ''}{strategy.last_7d_return_pct.toFixed(2)}%
-                      </Typography>
+                      />
                     </Box>
-                    <Box sx={{ textAlign: 'right' }}>
-                      <Typography variant="caption" color="text.secondary" display="block">
-                        Last Signal
-                      </Typography>
-                      <Typography variant="caption" color="text.primary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                        <Clock size={12} />
-                        {strategy.last_signal_at ? formatDistanceToNow(new Date(strategy.last_signal_at), { addSuffix: true }) : 'Never'}
-                      </Typography>
+
+                    <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
+                      <Chip
+                        label={translateStrategyType(strategy.strategy_type)}
+                        size="small"
+                        variant="outlined"
+                        sx={{ fontSize: 10, height: 20 }}
+                      />
+                      <Chip
+                        icon={<PlayCircle size={12} />}
+                        label={`${strategy.active_session_count}개 세션`}
+                        size="small"
+                        variant="outlined"
+                        sx={{ fontSize: 10, height: 20 }}
+                      />
+                    </Stack>
+
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 2 }}>
+                      <Box>
+                        <Typography variant="caption" color="text.secondary" display="block">
+                          최근 7일 수익률
+                        </Typography>
+                        {strategy.last_7d_return_pct === null ? (
+                          <Typography variant="body2" color="text.disabled">
+                            데이터 없음
+                          </Typography>
+                        ) : (
+                          <Box
+                            sx={{
+                              mt: 0.5,
+                              fontSize: '1.05rem',
+                              fontWeight: 700,
+                              color: strategy.last_7d_return_pct >= 0 ? 'status.success' : 'status.danger',
+                            }}
+                          >
+                            <AnimatedOdometer
+                              value={strategy.last_7d_return_pct}
+                              precision={2}
+                              suffix="%"
+                              showPositiveSign
+                            />
+                          </Box>
+                        )}
+                      </Box>
+                      <Box sx={{ textAlign: 'right' }}>
+                        <Typography variant="caption" color="text.secondary" display="block">
+                          마지막 신호
+                        </Typography>
+                        <Typography
+                          variant="caption"
+                          color="text.primary"
+                          sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}
+                        >
+                          <Clock size={12} />
+                          {strategy.last_signal_at ? formatRelativeTime(strategy.last_signal_at) : '없음'}
+                        </Typography>
+                      </Box>
                     </Box>
-                  </Box>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              </ButtonBase>
             </Grid>
           ))
         )}
       </Grid>
 
-      {/* Bottom Panels */}
       <Grid container spacing={3}>
-        {/* Risk Alerts Panel */}
         <Grid item xs={12} md={6}>
-          <Card sx={{ height: '100%', minHeight: 400 }}>
+          <Card sx={{ height: '100%', minHeight: 420 }}>
             <CardContent sx={{ p: 0 }}>
-              <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Typography variant="h6">Risk Alerts</Typography>
-                <Stack direction="row" spacing={1}>
-                  {summary?.risk_overview.blocked_signal_count_1h ? (
-                    <Chip label={`${summary.risk_overview.blocked_signal_count_1h} Blocked (1h)`} size="small" color="warning" />
-                  ) : null}
-                </Stack>
+              <Box
+                sx={{
+                  p: 2,
+                  borderBottom: 1,
+                  borderColor: 'divider',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                }}
+              >
+                <Typography variant="h6">리스크 알림</Typography>
+                {summary?.risk_overview.blocked_signal_count_1h ? (
+                  <Chip label={`1시간 차단 ${summary.risk_overview.blocked_signal_count_1h}건`} size="small" color="warning" />
+                ) : null}
               </Box>
-              
+
               <TableContainer>
                 <Table size="small" sx={{ '& .MuiTableCell-root': { py: 1.5 } }}>
                   <TableHead>
                     <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 12 } }}>
-                      <TableCell>Time</TableCell>
-                      <TableCell>Severity</TableCell>
-                      <TableCell>Code</TableCell>
-                      <TableCell>Message</TableCell>
+                      <TableCell>시간</TableCell>
+                      <TableCell>심각도</TableCell>
+                      <TableCell>코드</TableCell>
+                      <TableCell>메시지</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {!summary?.risk_overview.items || summary.risk_overview.items.length === 0 ? (
+                    {riskItems.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={4} align="center" sx={{ py: 8 }}>
-                          <Typography color="text.secondary">No active risk alerts</Typography>
+                          <Typography color="text.secondary">활성 리스크 알림이 없습니다.</Typography>
                         </TableCell>
                       </TableRow>
                     ) : (
-                      summary.risk_overview.items.map((alert, i) => (
-                        <TableRow key={i} hover>
+                      riskItems.map((alert) => (
+                        <TableRow
+                          key={alert.id}
+                          ref={setRiskRowRef(alert.id)}
+                          hover
+                          sx={{ '& td': { backgroundColor: 'transparent' } }}
+                        >
                           <TableCell sx={{ whiteSpace: 'nowrap' }}>
                             <Typography variant="caption" color="text.secondary">
-                              {format(new Date(alert.created_at), 'HH:mm:ss')}
+                              {formatTime(alert.created_at)}
                             </Typography>
                           </TableCell>
                           <TableCell>
-                            <Chip 
-                              label={alert.severity} 
-                              size="small" 
-                              sx={{ 
-                                fontSize: 10, 
+                            <Chip
+                              label={translateSeverity(alert.severity)}
+                              size="small"
+                              sx={{
+                                fontSize: 10,
                                 height: 20,
-                                bgcolor: getSeverityColor(alert.severity) === 'default' ? 'action.disabledBackground' : `status.${getSeverityColor(alert.severity)}`,
-                                color: getSeverityColor(alert.severity) === 'default' ? 'text.secondary' : 'white'
+                                bgcolor:
+                                  getSeverityColor(alert.severity) === 'default'
+                                    ? 'action.disabledBackground'
+                                    : `status.${getSeverityColor(alert.severity)}`,
+                                color: getSeverityColor(alert.severity) === 'default' ? 'text.secondary' : 'white',
                               }}
                             />
                           </TableCell>
@@ -327,7 +365,7 @@ export default function DashboardPage() {
                             </Typography>
                           </TableCell>
                           <TableCell>
-                            <Typography variant="body2" noWrap title={alert.message} sx={{ maxWidth: 200 }}>
+                            <Typography variant="body2" noWrap title={alert.message} sx={{ maxWidth: 240 }}>
                               {alert.message}
                             </Typography>
                           </TableCell>
@@ -341,46 +379,47 @@ export default function DashboardPage() {
           </Card>
         </Grid>
 
-        {/* Recent Signals Feed */}
         <Grid item xs={12} md={6}>
-          <Card sx={{ height: '100%', minHeight: 400 }}>
+          <Card sx={{ height: '100%', minHeight: 420 }}>
             <CardContent sx={{ p: 0 }}>
               <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
-                <Typography variant="h6">Recent Signals</Typography>
+                <Typography variant="h6">최근 신호</Typography>
               </Box>
-              
+
               <TableContainer>
                 <Table size="small" sx={{ '& .MuiTableCell-root': { py: 1.5 } }}>
                   <TableHead>
                     <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 12 } }}>
-                      <TableCell>Time</TableCell>
-                      <TableCell>Symbol</TableCell>
-                      <TableCell>Action</TableCell>
-                      <TableCell align="right">Price</TableCell>
-                      <TableCell align="right">Confidence</TableCell>
+                      <TableCell>시간</TableCell>
+                      <TableCell>심볼</TableCell>
+                      <TableCell>액션</TableCell>
+                      <TableCell align="right">가격</TableCell>
+                      <TableCell align="right">신뢰도</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {!summary?.recent_signals || summary.recent_signals.length === 0 ? (
+                    {recentSignals.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={5} align="center" sx={{ py: 8 }}>
-                          <Typography color="text.secondary">No recent signals</Typography>
+                          <Typography color="text.secondary">최근 신호가 없습니다.</Typography>
                         </TableCell>
                       </TableRow>
                     ) : (
-                      summary.recent_signals.map((signal) => {
+                      recentSignals.map((signal) => {
                         const actionColor = getActionColor(signal.action)
                         return (
-                          <TableRow 
-                            key={signal.id} 
+                          <TableRow
+                            key={signal.id}
+                            ref={setSignalRowRef(signal.id)}
                             hover
-                            sx={{ 
-                              bgcolor: signal.blocked ? 'rgba(255, 152, 0, 0.05)' : 'transparent'
+                            sx={{
+                              bgcolor: signal.blocked ? 'rgba(255, 152, 0, 0.05)' : 'transparent',
+                              '& td': { backgroundColor: 'transparent' },
                             }}
                           >
                             <TableCell sx={{ whiteSpace: 'nowrap' }}>
                               <Typography variant="caption" color="text.secondary">
-                                {formatDistanceToNow(new Date(signal.snapshot_time), { addSuffix: true })}
+                                {formatRelativeTime(signal.snapshot_time)}
                               </Typography>
                             </TableCell>
                             <TableCell>
@@ -390,24 +429,30 @@ export default function DashboardPage() {
                             </TableCell>
                             <TableCell>
                               <Stack direction="row" spacing={1} alignItems="center">
-                                <Chip 
-                                  label={signal.action} 
-                                  size="small" 
-                                  sx={{ 
-                                    fontSize: 10, 
+                                <Chip
+                                  label={translateSignalAction(signal.action)}
+                                  size="small"
+                                  sx={{
+                                    fontSize: 10,
                                     height: 20,
                                     bgcolor: `status.${actionColor}`,
-                                    color: 'white'
+                                    color: 'white',
                                   }}
                                 />
-                                {signal.blocked && (
-                                  <Chip label="BLOCKED" size="small" color="warning" variant="outlined" sx={{ fontSize: 10, height: 20 }} />
-                                )}
+                                {signal.blocked ? (
+                                  <Chip
+                                    label="차단"
+                                    size="small"
+                                    color="warning"
+                                    variant="outlined"
+                                    sx={{ fontSize: 10, height: 20 }}
+                                  />
+                                ) : null}
                               </Stack>
                             </TableCell>
                             <TableCell align="right">
                               <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                                {signal.signal_price.toLocaleString()}
+                                {signal.signal_price?.toLocaleString() ?? '-'}
                               </Typography>
                             </TableCell>
                             <TableCell align="right">
@@ -427,5 +472,36 @@ export default function DashboardPage() {
         </Grid>
       </Grid>
     </Box>
+  )
+}
+
+function MetricCard({
+  label,
+  value,
+  color,
+}: {
+  label: string
+  value: ReactNode
+  color: string
+}) {
+  return (
+    <Card>
+      <CardContent>
+        <Typography color="text.secondary" gutterBottom variant="body2">
+          {label}
+        </Typography>
+        <Box
+          sx={{
+            color,
+            fontSize: '2.125rem',
+            lineHeight: 1.2,
+            fontWeight: 500,
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          {value}
+        </Box>
+      </CardContent>
+    </Card>
   )
 }

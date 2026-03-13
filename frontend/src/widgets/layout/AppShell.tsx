@@ -9,15 +9,14 @@ import {
   ScrollText,
   Settings,
 } from 'lucide-react'
-
 const NAV_ITEMS = [
-  { id: 'dashboard', path: '/', icon: LayoutDashboard, label: 'Dashboard' },
-  { id: 'monitoring', path: '/monitoring', icon: Activity, label: 'Monitoring' },
-  { id: 'strategies', path: '/strategies', icon: Layers, label: 'Strategies' },
-  { id: 'backtests', path: '/backtests', icon: FlaskConical, label: 'Backtests' },
-  { id: 'compare', path: '/compare', icon: GitCompare, label: 'Compare' },
-  { id: 'logs', path: '/logs', icon: ScrollText, label: 'Logs' },
-  { id: 'settings', path: '/settings', icon: Settings, label: 'Settings' },
+  { id: 'dashboard', path: '/', icon: LayoutDashboard, label: '대시보드' },
+  { id: 'monitoring', path: '/monitoring', icon: Activity, label: '모니터링' },
+  { id: 'strategies', path: '/strategies', icon: Layers, label: '전략' },
+  { id: 'backtests', path: '/backtests', icon: FlaskConical, label: '백테스트' },
+  { id: 'compare', path: '/compare', icon: GitCompare, label: '비교' },
+  { id: 'logs', path: '/logs', icon: ScrollText, label: '로그' },
+  { id: 'settings', path: '/settings', icon: Settings, label: '설정' },
 ]
 
 export function AppShell() {

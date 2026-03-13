@@ -49,7 +49,7 @@ class StrategyValidator:
                 self._add_issue(
                     errors,
                     error_codes.DSL_UNKNOWN_TOP_LEVEL_KEY,
-                    f"Unknown top-level key '{key}'.",
+                    f"알 수 없는 최상위 키 '{key}'입니다.",
                     f"$.{key}",
                 )
         for field_name in self.REQUIRED_TOP_LEVEL_FIELDS:
@@ -57,7 +57,7 @@ class StrategyValidator:
                 self._add_issue(
                     errors,
                     error_codes.DSL_MISSING_REQUIRED_FIELD,
-                    f"Missing required field '{field_name}'.",
+                    f"필수 필드 '{field_name}'가 없습니다.",
                     f"$.{field_name}",
                 )
 
@@ -85,19 +85,36 @@ class StrategyValidator:
             self._add_issue(
                 errors,
                 error_codes.DSL_INVALID_THRESHOLD_RANGE,
-                "market.timeframes must not contain duplicates.",
+                "market.timeframes에는 중복 값이 있으면 안 됩니다.",
                 "$.market.timeframes",
             )
 
-        _ = self._validate_enum(universe.get("mode"), ("dynamic",), "$.universe.mode", errors)
+        universe_mode = self._validate_enum(universe.get("mode"), ("dynamic", "static"), "$.universe.mode", errors)
         sources = self._ensure_list(universe.get("sources"))
-        for index, source in enumerate(sources):
-            _ = self._validate_enum(
-                source,
-                ("top_turnover", "top_volume", "surge", "drop", "watchlist"),
-                f"$.universe.sources[{index}]",
-                errors,
-            )
+        if universe_mode == "dynamic":
+            for index, source in enumerate(sources):
+                _ = self._validate_enum(
+                    source,
+                    ("top_turnover", "top_volume", "surge", "drop", "watchlist"),
+                    f"$.universe.sources[{index}]",
+                    errors,
+                )
+        if universe_mode == "static":
+            symbols = self._ensure_list(universe.get("symbols"))
+            if len(symbols) == 0:
+                self._add_issue(
+                    errors,
+                    error_codes.DSL_VALIDATION_FAILED,
+                    "static 유니버스에는 최소 1개 이상의 심볼이 필요합니다.",
+                    "$.universe.symbols",
+                )
+            if self._has_duplicates(symbols):
+                self._add_issue(
+                    errors,
+                    error_codes.DSL_INVALID_THRESHOLD_RANGE,
+                    "universe.symbols에는 중복 심볼이 있으면 안 됩니다.",
+                    "$.universe.symbols",
+                )
 
         size_mode = self._validate_enum(
             position.get("size_mode"),
@@ -113,7 +130,7 @@ class StrategyValidator:
                 self._add_issue(
                     errors,
                     error_codes.DSL_INVALID_THRESHOLD_RANGE,
-                    "fractional_kelly size_value must satisfy 0 < value <= 1.",
+                    "fractional_kelly의 size_value는 0 < 값 <= 1 조건을 만족해야 합니다.",
                     "$.position.size_value",
                 )
 
@@ -128,7 +145,7 @@ class StrategyValidator:
             self._add_issue(
                 errors,
                 error_codes.DSL_INVALID_THRESHOLD_RANGE,
-                "position.size_caps.min_pct must be <= max_pct.",
+                "position.size_caps.min_pct는 max_pct 이하여야 합니다.",
                 "$.position.size_caps",
             )
 
@@ -151,14 +168,14 @@ class StrategyValidator:
                 self._add_issue(
                     errors,
                     error_codes.DSL_INVALID_PARTIAL_TP_SUM,
-                    "partial_take_profits.close_ratio must be numeric.",
+                    "partial_take_profits.close_ratio는 숫자여야 합니다.",
                     f"$.exit.partial_take_profits[{index}].close_ratio",
                 )
         if total_close_ratio > 1.0:
             self._add_issue(
                 errors,
                 error_codes.DSL_INVALID_PARTIAL_TP_SUM,
-                "Sum of partial_take_profits.close_ratio must be <= 1.0.",
+                "partial_take_profits.close_ratio의 합계는 1.0 이하여야 합니다.",
                 "$.exit.partial_take_profits",
             )
 
@@ -212,37 +229,37 @@ class StrategyValidator:
                     self._add_issue(
                         errors,
                         error_codes.DSL_PLUGIN_AND_DSL_CONFLICT,
-                        f"{key} cannot defer to plugin when type is 'dsl'.",
+                        f"type이 'dsl'일 때는 {key}를 플러그인에 위임할 수 없습니다.",
                         f"$.{key}",
                     )
                 if key == "entry" and not section:
                     self._add_issue(
                         errors,
                         error_codes.DSL_PLUGIN_AND_DSL_CONFLICT,
-                        "entry cannot be an empty stub when type is 'dsl'.",
+                        "type이 'dsl'일 때 entry는 비어 있을 수 없습니다.",
                         "$.entry",
                     )
         if strategy_type == "plugin":
             self._add_issue(
                 warnings,
                 error_codes.DSL_PLUGIN_AND_DSL_CONFLICT,
-                "entry/exit DSL blocks are ignored when strategy type is 'plugin'.",
+                "전략 타입이 'plugin'이면 entry/exit DSL 블록은 무시됩니다.",
                 "$.entry",
             )
 
         if strict:
-            if "watchlist" not in sources:
+            if universe_mode == "dynamic" and "watchlist" not in sources:
                 self._add_issue(
                     warnings,
                     "DSL_UNIVERSE_TOP_TURNOVER_ONLY",
-                    "No watchlist source configured in universe.sources.",
+                    "universe.sources에 watchlist 소스가 설정되어 있지 않습니다.",
                     "$.universe.sources",
                 )
             if reentry.get("allow") is False:
                 self._add_issue(
                     warnings,
                     "DSL_REENTRY_DISABLED",
-                    "reentry.allow is false.",
+                    "reentry.allow이 false입니다.",
                     "$.reentry.allow",
                 )
 
@@ -260,7 +277,7 @@ class StrategyValidator:
             self._add_issue(
                 errors,
                 error_codes.DSL_INVALID_CONDITION_DEPTH,
-                f"Condition depth exceeded max depth {self.MAX_CONDITION_DEPTH}.",
+                f"조건식 깊이가 최대 허용치 {self.MAX_CONDITION_DEPTH}를 초과했습니다.",
                 path,
             )
             return
@@ -269,14 +286,14 @@ class StrategyValidator:
             if logic in {"all", "any"}:
                 raw_conditions = node.get("conditions")
                 if not isinstance(raw_conditions, list):
-                    self._add_issue(errors, error_codes.DSL_VALIDATION_FAILED, "conditions must be an array.", f"{path}.conditions")
+                    self._add_issue(errors, error_codes.DSL_VALIDATION_FAILED, "conditions는 배열이어야 합니다.", f"{path}.conditions")
                     return
                 conditions = cast(list[object], raw_conditions)
                 if len(conditions) == 0:
                     self._add_issue(
                         errors,
                         error_codes.DSL_EMPTY_CONDITIONS,
-                        "conditions must not be empty.",
+                        "conditions는 비어 있을 수 없습니다.",
                         f"{path}.conditions",
                     )
                     return
@@ -288,7 +305,7 @@ class StrategyValidator:
                         self._add_issue(
                             errors,
                             error_codes.DSL_VALIDATION_FAILED,
-                            "Condition must be an object.",
+                            "조건식은 객체여야 합니다.",
                             f"{path}.conditions[{index}]",
                         )
                 return
@@ -300,11 +317,11 @@ class StrategyValidator:
                     self._add_issue(
                         errors,
                         error_codes.DSL_VALIDATION_FAILED,
-                        "'not' requires a single condition object.",
+                        "'not'은 단일 조건 객체를 필요로 합니다.",
                         f"{path}.condition",
                     )
                 return
-            self._add_issue(errors, error_codes.DSL_VALIDATION_FAILED, f"Unknown logic block '{logic}'.", f"{path}.logic")
+            self._add_issue(errors, error_codes.DSL_VALIDATION_FAILED, f"알 수 없는 논리 블록 '{logic}'입니다.", f"{path}.logic")
             return
 
         leaf_type = node.get("type")
@@ -312,7 +329,7 @@ class StrategyValidator:
             self._add_issue(
                 errors,
                 error_codes.DSL_UNKNOWN_OPERATOR,
-                f"Unknown leaf type '{leaf_type}'.",
+                f"알 수 없는 리프 조건 타입 '{leaf_type}'입니다.",
                 f"{path}.type",
             )
             return
@@ -322,7 +339,7 @@ class StrategyValidator:
             self._add_issue(
                 errors,
                 error_codes.DSL_UNKNOWN_OPERATOR,
-                f"Unknown operator '{operator}'.",
+                f"알 수 없는 연산자 '{operator}'입니다.",
                 f"{path}.operator",
             )
 
@@ -348,7 +365,7 @@ class StrategyValidator:
                 self._add_issue(
                     errors,
                     error_codes.DSL_INVALID_THRESHOLD_RANGE,
-                    "rsi_range.min and rsi_range.max must be numeric.",
+                    "rsi_range.min과 rsi_range.max는 숫자여야 합니다.",
                     path,
                 )
             else:
@@ -358,7 +375,7 @@ class StrategyValidator:
                     self._add_issue(
                         errors,
                         error_codes.DSL_INVALID_THRESHOLD_RANGE,
-                        "rsi_range requires 0 <= min <= max <= 100.",
+                        "rsi_range는 0 <= min <= max <= 100 조건을 만족해야 합니다.",
                         path,
                     )
         elif leaf_type == "candle_pattern":
@@ -367,7 +384,7 @@ class StrategyValidator:
                 self._add_issue(
                     errors,
                     error_codes.DSL_INVALID_TIMEFRAME_REFERENCE,
-                    f"candle_pattern.timeframe '{timeframe}' is not in market.timeframes.",
+                    f"candle_pattern.timeframe '{timeframe}'이 market.timeframes에 없습니다.",
                     f"{path}.timeframe",
                 )
         elif leaf_type == "regime_match":
@@ -389,7 +406,7 @@ class StrategyValidator:
                 self._add_issue(
                     errors,
                     error_codes.DSL_INVALID_TIMEFRAME_REFERENCE,
-                    f"compare_to '{compare_to}' is not in market.timeframes.",
+                    f"compare_to '{compare_to}'가 market.timeframes에 없습니다.",
                     f"{path}.compare_to",
                 )
             for key, child in value_map.items():
@@ -401,39 +418,39 @@ class StrategyValidator:
 
     def _validate_source_ref(self, value: object, path: str, errors: list[dict[str, str]]) -> None:
         if not isinstance(value, dict):
-            self._add_issue(errors, error_codes.DSL_INVALID_SOURCE_REF, "SourceRef must be an object.", path)
+            self._add_issue(errors, error_codes.DSL_INVALID_SOURCE_REF, "SourceRef는 객체여야 합니다.", path)
             return
         source_ref = self._as_dict(cast(object, value))
         kind = source_ref.get("kind")
         if not isinstance(kind, str) or kind not in self.SOURCE_KINDS:
-            self._add_issue(errors, error_codes.DSL_INVALID_SOURCE_REF, f"Invalid SourceRef kind '{kind}'.", f"{path}.kind")
+            self._add_issue(errors, error_codes.DSL_INVALID_SOURCE_REF, f"유효하지 않은 SourceRef kind '{kind}'입니다.", f"{path}.kind")
             return
         if kind == "price" and not isinstance(source_ref.get("field"), str):
-            self._add_issue(errors, error_codes.DSL_INVALID_SOURCE_REF, "price SourceRef requires 'field'.", f"{path}.field")
+            self._add_issue(errors, error_codes.DSL_INVALID_SOURCE_REF, "price SourceRef에는 'field'가 필요합니다.", f"{path}.field")
         if kind == "indicator" and not isinstance(source_ref.get("name"), str):
-            self._add_issue(errors, error_codes.DSL_INVALID_SOURCE_REF, "indicator SourceRef requires 'name'.", f"{path}.name")
+            self._add_issue(errors, error_codes.DSL_INVALID_SOURCE_REF, "indicator SourceRef에는 'name'이 필요합니다.", f"{path}.name")
         if kind == "constant" and "value" not in source_ref:
-            self._add_issue(errors, error_codes.DSL_INVALID_SOURCE_REF, "constant SourceRef requires 'value'.", f"{path}.value")
+            self._add_issue(errors, error_codes.DSL_INVALID_SOURCE_REF, "constant SourceRef에는 'value'가 필요합니다.", f"{path}.value")
 
     def _validate_positive(self, value: object, path: str, errors: list[dict[str, str]]) -> None:
         if not self._is_number(value) or float(value) <= 0:
-            self._add_issue(errors, error_codes.DSL_INVALID_THRESHOLD_RANGE, "Value must be > 0.", path)
+            self._add_issue(errors, error_codes.DSL_INVALID_THRESHOLD_RANGE, "값은 0보다 커야 합니다.", path)
 
     def _validate_non_negative(self, value: object, path: str, errors: list[dict[str, str]]) -> None:
         if not self._is_number(value) or float(value) < 0:
-            self._add_issue(errors, error_codes.DSL_INVALID_THRESHOLD_RANGE, "Value must be >= 0.", path)
+            self._add_issue(errors, error_codes.DSL_INVALID_THRESHOLD_RANGE, "값은 0 이상이어야 합니다.", path)
 
     def _validate_positive_int(self, value: object, path: str, errors: list[dict[str, str]]) -> None:
         if not isinstance(value, int) or value <= 0:
-            self._add_issue(errors, error_codes.DSL_INVALID_THRESHOLD_RANGE, "Value must be a positive integer.", path)
+            self._add_issue(errors, error_codes.DSL_INVALID_THRESHOLD_RANGE, "값은 양의 정수여야 합니다.", path)
 
     def _validate_unit_range(self, value: object, path: str, errors: list[dict[str, str]]) -> None:
         if not self._is_number(value):
-            self._add_issue(errors, error_codes.DSL_INVALID_THRESHOLD_RANGE, "Value must be numeric.", path)
+            self._add_issue(errors, error_codes.DSL_INVALID_THRESHOLD_RANGE, "값은 숫자여야 합니다.", path)
             return
         float_value = float(value)
         if float_value < 0 or float_value > 1:
-            self._add_issue(errors, error_codes.DSL_INVALID_THRESHOLD_RANGE, "Value must be in [0, 1].", path)
+            self._add_issue(errors, error_codes.DSL_INVALID_THRESHOLD_RANGE, "값은 [0, 1] 범위여야 합니다.", path)
 
     def _validate_enum(
         self,
@@ -447,7 +464,7 @@ class StrategyValidator:
             self._add_issue(
                 errors,
                 error_codes.DSL_INVALID_ENUM,
-                f"Invalid enum at {path}. Allowed values: {', '.join(allowed_values)}.",
+                f"{path}의 enum 값이 올바르지 않습니다. 허용 값: {', '.join(allowed_values)}.",
                 path,
             )
             return None

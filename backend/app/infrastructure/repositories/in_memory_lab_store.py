@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TypeVar
 
-from ...domain.seed_data import default_seed_data
 from ...domain.entities.session import (
     BacktestRun,
     BacktestTrade,
@@ -42,19 +40,7 @@ class InMemoryLabStore(LabStore):
         self._universe: list[dict[str, object]] = []
 
     def seed_defaults(self) -> None:
-        if self._strategies:
-            return
-        seed_data = default_seed_data(_now())
-        for bundle in seed_data.strategy_bundles:
-            strategy = replace(bundle.strategy, latest_version_id=None, latest_version_no=None)
-            self.create_strategy(strategy)
-            self.create_strategy_version(bundle.version)
-            strategy.latest_version_id = bundle.version.id
-            strategy.latest_version_no = bundle.version.version_no
-            self.update_strategy(strategy)
-        self._universe = [dict(item) for item in seed_data.universe_symbols]
-        for log in seed_data.logs:
-            self.append_log(log)
+        return None
 
     def create_strategy(self, strategy: Strategy) -> Strategy:
         self._strategies[strategy.id] = strategy

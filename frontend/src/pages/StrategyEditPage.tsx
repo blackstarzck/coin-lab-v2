@@ -6,6 +6,7 @@ import {
   Box,
   Button,
   Card,
+  Checkbox,
   CircularProgress,
   FormControl,
   FormControlLabel,
@@ -31,9 +32,13 @@ import {
   useValidateDraft,
   useValidateVersion,
 } from '@/features/strategies/api'
+import { useCurrentUniverse } from '@/features/universe/api'
 import type { Strategy, StrategyVersion, ValidationResult } from '@/entities/strategy/types'
+import { translateStrategyType } from '@/shared/lib/i18n'
 
 type JsonObject = Record<string, unknown>
+const DEFAULT_STRATEGY_SYMBOLS = ['KRW-BTC']
+const COMMON_STRATEGY_SYMBOLS = ['KRW-BTC', 'KRW-ETH', 'KRW-SOL', 'KRW-XRP', 'KRW-DOGE']
 
 interface DiffRow {
   path: string
@@ -47,6 +52,20 @@ function asObject(value: unknown): JsonObject {
 
 function asArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map((item) => String(item)) : []
+}
+
+function normalizeSymbolList(value: unknown, fallback = DEFAULT_STRATEGY_SYMBOLS): string[] {
+  const seen = new Set<string>()
+  const normalized = asArray(value)
+    .map((item) => item.trim().toUpperCase())
+    .filter((item) => {
+      if (!item || seen.has(item)) {
+        return false
+      }
+      seen.add(item)
+      return true
+    })
+  return normalized.length > 0 ? normalized : [...fallback]
 }
 
 function asNumber(value: unknown, fallback = 0): number {
@@ -75,6 +94,20 @@ function updateNestedConfig(config: JsonObject, path: string[], value: unknown):
   return nextConfig
 }
 
+function normalizeEditableConfig(config: JsonObject): JsonObject {
+  const universe = asObject(config.universe)
+  const symbols = normalizeSymbolList(universe.symbols)
+  return {
+    ...config,
+    universe: {
+      ...universe,
+      mode: 'static',
+      symbols,
+      max_symbols: symbols.length,
+    },
+  }
+}
+
 function buildDiffRows(before: unknown, after: unknown, path = ''): DiffRow[] {
   if (JSON.stringify(before) === JSON.stringify(after)) {
     return []
@@ -91,8 +124,16 @@ function buildDiffRows(before: unknown, after: unknown, path = ''): DiffRow[] {
 }
 
 function buildDraftConfig(baseConfig: JsonObject, name: string, description: string, labels: string[], notes: string): JsonObject {
+  const universe = asObject(baseConfig.universe)
+  const symbols = normalizeSymbolList(universe.symbols)
   return {
     ...baseConfig,
+    universe: {
+      ...universe,
+      mode: 'static',
+      symbols,
+      max_symbols: symbols.length,
+    },
     name,
     description,
     labels,
@@ -152,14 +193,16 @@ function StrategyEditForm({
   const createVersionMutation = useCreateStrategyVersion()
   const validateDraftMutation = useValidateDraft()
   const validateVersionMutation = useValidateVersion()
+  const { data: currentUniverse } = useCurrentUniverse()
+  const initialConfig = normalizeEditableConfig(asObject(latestVersion?.config_json))
 
   const [tabValue, setTabValue] = useState(0)
   const [name, setName] = useState(strategy.name)
   const [description, setDescription] = useState(strategy.description ?? '')
   const [labelsText, setLabelsText] = useState(strategy.labels.join(', '))
   const [notes, setNotes] = useState(latestVersion?.notes ?? '')
-  const [configJson, setConfigJson] = useState<JsonObject>(latestVersion?.config_json ?? {})
-  const [jsonText, setJsonText] = useState(JSON.stringify(latestVersion?.config_json ?? {}, null, 2))
+  const [configJson, setConfigJson] = useState<JsonObject>(initialConfig)
+  const [jsonText, setJsonText] = useState(JSON.stringify(initialConfig, null, 2))
   const [jsonError, setJsonError] = useState<string | null>(null)
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -169,10 +212,25 @@ function StrategyEditForm({
 
   const market = asObject(configJson.market)
   const universe = asObject(configJson.universe)
+  const selectedSymbols = normalizeSymbolList(universe.symbols)
   const position = asObject(configJson.position)
   const risk = asObject(configJson.risk)
   const execution = asObject(configJson.execution)
   const backtest = asObject(configJson.backtest)
+  const availableSymbols = useMemo(() => {
+    const items = currentUniverse?.map((item) => item.symbol) ?? []
+    return Array.from(new Set([...selectedSymbols, ...COMMON_STRATEGY_SYMBOLS, ...items]))
+      .sort((left, right) => {
+        const leftSelected = selectedSymbols.includes(left)
+        const rightSelected = selectedSymbols.includes(right)
+        if (leftSelected !== rightSelected) {
+          return leftSelected ? -1 : 1
+        }
+        if (left === 'KRW-BTC') return -1
+        if (right === 'KRW-BTC') return 1
+        return left.localeCompare(right)
+      })
+  }, [currentUniverse, selectedSymbols])
 
   const updateConfigAtPath = (path: string[], value: unknown) => {
     setConfigJson((prev) => updateNestedConfig(prev, path, value))
@@ -184,6 +242,22 @@ function StrategyEditForm({
 
   const updateNumberAtPath = (path: string[], fallback = 0) => (event: ChangeEvent<HTMLInputElement>) => {
     updateConfigAtPath(path, parseNumberInput(event.target.value, fallback))
+  }
+
+  const handleToggleSymbol = (symbol: string) => {
+    const nextSymbols = selectedSymbols.includes(symbol)
+      ? selectedSymbols.filter((item) => item !== symbol)
+      : [...selectedSymbols, symbol]
+    const normalizedSymbols = normalizeSymbolList(nextSymbols)
+    setConfigJson((prev) => updateNestedConfig(
+      updateNestedConfig(
+        updateNestedConfig(prev, ['universe', 'mode'], 'static'),
+        ['universe', 'symbols'],
+        normalizedSymbols,
+      ),
+      ['universe', 'max_symbols'],
+      normalizedSymbols.length,
+    ))
   }
 
   useEffect(() => {
@@ -224,7 +298,7 @@ function StrategyEditForm({
       }
       onSaved()
     } catch {
-      setSaveError('Failed to save the new strategy version.')
+      setSaveError('전략 버전을 저장하지 못했습니다.')
     }
   }
 
@@ -235,13 +309,13 @@ function StrategyEditForm({
           <ArrowLeft size={20} />
         </IconButton>
         <Box sx={{ flexGrow: 1 }}>
-          <Typography variant="h5">Edit Strategy: {strategy.name}</Typography>
+          <Typography variant="h5">전략 편집: {strategy.name}</Typography>
           <Typography variant="body2" color="text.tertiary">
-            Saving creates a new version from v{latestVersion?.version_no || 1}.
+            저장하면 v{latestVersion?.version_no || 1} 기준으로 새 버전이 생성됩니다.
           </Typography>
         </Box>
         <Button variant="outlined" onClick={handleValidate} disabled={!!jsonError || validateDraftMutation.isPending}>
-          {validateDraftMutation.isPending ? 'Validating...' : 'Validate Draft'}
+          {validateDraftMutation.isPending ? '검증 중...' : '초안 검증'}
         </Button>
       </Box>
 
@@ -255,28 +329,28 @@ function StrategyEditForm({
           variant="scrollable"
           sx={{ minWidth: 220, borderRight: 1, borderColor: 'divider', bgcolor: 'bg.surface2' }}
         >
-          <Tab label="Basic" />
-          <Tab label="Market & Universe" />
-          <Tab label="Entry" />
-          <Tab label="Reentry" />
-          <Tab label="Position" />
-          <Tab label="Exit" />
-          <Tab label="Risk" />
-          <Tab label="Execution" />
-          <Tab label="Backtest" />
-          <Tab label={`Diff Preview (${diffRows.length})`} />
-          <Tab label="JSON Editor" />
-          <Tab label={validationResult?.valid ? 'Validation ✓' : 'Validation'} />
+          <Tab label="기본 정보" />
+          <Tab label="마켓 및 유니버스" />
+          <Tab label="진입" />
+          <Tab label="재진입" />
+          <Tab label="포지션" />
+          <Tab label="청산" />
+          <Tab label="리스크" />
+          <Tab label="실행" />
+          <Tab label="백테스트" />
+          <Tab label={`변경 미리보기 (${diffRows.length})`} />
+          <Tab label="JSON 편집기" />
+          <Tab label={validationResult?.valid ? '검증 완료' : '검증'} />
         </Tabs>
 
         <Box sx={{ flexGrow: 1, overflow: 'hidden' }}>
           <TabPanel value={tabValue} index={0}>
             <Stack spacing={3} maxWidth={760}>
-              <TextField label="Strategy Name" value={name} onChange={(event) => setName(event.target.value)} fullWidth />
-              <TextField label="Description" value={description} onChange={(event) => setDescription(event.target.value)} multiline rows={3} fullWidth />
-              <TextField label="Labels (comma separated)" value={labelsText} onChange={(event) => setLabelsText(event.target.value)} fullWidth />
-              <TextField label="Version Notes" value={notes} onChange={(event) => setNotes(event.target.value)} multiline rows={3} fullWidth />
-              <TextField label="Strategy Type" value={strategy.strategy_type.toUpperCase()} disabled fullWidth />
+              <TextField label="전략명" value={name} onChange={(event) => setName(event.target.value)} fullWidth />
+              <TextField label="설명" value={description} onChange={(event) => setDescription(event.target.value)} multiline rows={3} fullWidth />
+              <TextField label="라벨 (쉼표로 구분)" value={labelsText} onChange={(event) => setLabelsText(event.target.value)} fullWidth />
+              <TextField label="버전 노트" value={notes} onChange={(event) => setNotes(event.target.value)} multiline rows={3} fullWidth />
+              <TextField label="전략 유형" value={translateStrategyType(strategy.strategy_type)} disabled fullWidth />
             </Stack>
           </TabPanel>
 
@@ -284,67 +358,99 @@ function StrategyEditForm({
             <Grid container spacing={3} maxWidth={840}>
               <Grid item xs={12} sm={6}>
                 <FormControl fullWidth>
-                  <InputLabel>Exchange</InputLabel>
-                  <Select value={String(market.exchange ?? 'UPBIT')} label="Exchange" onChange={(event) => updateConfigAtPath(['market', 'exchange'], event.target.value)}>
+                  <InputLabel>거래소</InputLabel>
+                  <Select value={String(market.exchange ?? 'UPBIT')} label="거래소" onChange={(event) => updateConfigAtPath(['market', 'exchange'], event.target.value)}>
                     <MenuItem value="UPBIT">Upbit</MenuItem>
                   </Select>
                 </FormControl>
               </Grid>
               <Grid item xs={12} sm={6}>
                 <FormControl fullWidth>
-                  <InputLabel>Trade Basis</InputLabel>
-                  <Select value={String(market.trade_basis ?? 'candle')} label="Trade Basis" onChange={(event) => updateConfigAtPath(['market', 'trade_basis'], event.target.value)}>
-                    <MenuItem value="candle">Candle</MenuItem>
-                    <MenuItem value="tick">Tick</MenuItem>
-                    <MenuItem value="hybrid">Hybrid</MenuItem>
+                  <InputLabel>거래 기준</InputLabel>
+                  <Select value={String(market.trade_basis ?? 'candle')} label="거래 기준" onChange={(event) => updateConfigAtPath(['market', 'trade_basis'], event.target.value)}>
+                    <MenuItem value="candle">캔들</MenuItem>
+                    <MenuItem value="tick">틱</MenuItem>
+                    <MenuItem value="hybrid">혼합</MenuItem>
                   </Select>
                 </FormControl>
               </Grid>
               <Grid item xs={12}>
                 <TextField
-                  label="Timeframes"
+                  label="타임프레임"
                   value={asArray(market.timeframes).join(', ')}
                   onChange={(event) => updateConfigAtPath(
                     ['market', 'timeframes'],
                     event.target.value.split(',').map((item) => item.trim()).filter(Boolean),
                   )}
+                  helperText="쉼표로 구분해 입력합니다."
                   fullWidth
                 />
               </Grid>
-              <Grid item xs={12} sm={6}>
-                <FormControl fullWidth>
-                  <InputLabel>Universe Mode</InputLabel>
-                  <Select value={String(universe.mode ?? 'dynamic')} label="Universe Mode" onChange={(event) => updateConfigAtPath(['universe', 'mode'], event.target.value)}>
-                    <MenuItem value="dynamic">Dynamic</MenuItem>
-                    <MenuItem value="static">Static</MenuItem>
-                  </Select>
-                </FormControl>
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  label="Max Symbols"
-                  type="number"
-                  value={asNumber(universe.max_symbols, 10)}
-                  onChange={updateIntegerAtPath(['universe', 'max_symbols'], 10)}
-                  fullWidth
-                />
+              <Grid item xs={12}>
+                <Stack spacing={1.5}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Typography variant="subtitle2">실험 코인 선택</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {selectedSymbols.length}개 선택
+                    </Typography>
+                  </Box>
+                  <Grid container spacing={1.5}>
+                    {availableSymbols.map((symbol) => {
+                      const checked = selectedSymbols.includes(symbol)
+                      return (
+                        <Grid item xs={12} sm={6} md={4} key={symbol}>
+                          <Card
+                            variant="outlined"
+                            onClick={() => handleToggleSymbol(symbol)}
+                            sx={{
+                              cursor: 'pointer',
+                              borderColor: checked ? 'primary.main' : 'divider',
+                              bgcolor: checked ? 'rgba(0, 200, 120, 0.08)' : 'transparent',
+                              transition: 'border-color 0.2s ease, background-color 0.2s ease',
+                            }}
+                          >
+                            <Box sx={{ px: 1.5, py: 1.25, display: 'flex', alignItems: 'center', gap: 1 }}>
+                              <Checkbox
+                                checked={checked}
+                                size="small"
+                                onClick={(event) => event.stopPropagation()}
+                                onChange={() => handleToggleSymbol(symbol)}
+                              />
+                              <Box sx={{ minWidth: 0 }}>
+                                <Typography variant="body2" fontWeight={600}>
+                                  {symbol}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  {symbol.replace('KRW-', '')}
+                                </Typography>
+                              </Box>
+                            </Box>
+                          </Card>
+                        </Grid>
+                      )
+                    })}
+                  </Grid>
+                  <Typography variant="caption" color="text.secondary">
+                    기본 선택은 KRW-BTC입니다. 선택한 코인이 이 전략의 기본 실험 대상이 됩니다.
+                  </Typography>
+                </Stack>
               </Grid>
             </Grid>
           </TabPanel>
 
           <TabPanel value={tabValue} index={2}>
-            <JsonSection label="Entry JSON" value={asObject(configJson.entry)} onChange={(next) => setConfigJson((prev) => updateNestedConfig(prev, ['entry'], next))} />
+            <JsonSection label="진입 JSON" value={asObject(configJson.entry)} onChange={(next) => setConfigJson((prev) => updateNestedConfig(prev, ['entry'], next))} />
           </TabPanel>
 
           <TabPanel value={tabValue} index={3}>
-            <JsonSection label="Reentry JSON" value={asObject(configJson.reentry)} onChange={(next) => setConfigJson((prev) => updateNestedConfig(prev, ['reentry'], next))} />
+            <JsonSection label="재진입 JSON" value={asObject(configJson.reentry)} onChange={(next) => setConfigJson((prev) => updateNestedConfig(prev, ['reentry'], next))} />
           </TabPanel>
 
           <TabPanel value={tabValue} index={4}>
             <Grid container spacing={3} maxWidth={840}>
               <Grid item xs={12} sm={6}>
                 <TextField
-                  label="Max Open Positions Per Symbol"
+                  label="심볼별 최대 오픈 포지션"
                   type="number"
                   value={asNumber(position.max_open_positions_per_symbol, 1)}
                   onChange={updateIntegerAtPath(['position', 'max_open_positions_per_symbol'], 1)}
@@ -353,7 +459,7 @@ function StrategyEditForm({
               </Grid>
               <Grid item xs={12} sm={6}>
                 <TextField
-                  label="Max Concurrent Positions"
+                  label="최대 동시 포지션 수"
                   type="number"
                   value={asNumber(position.max_concurrent_positions, 4)}
                   onChange={updateIntegerAtPath(['position', 'max_concurrent_positions'], 4)}
@@ -361,20 +467,20 @@ function StrategyEditForm({
                 />
               </Grid>
               <Grid item xs={12}>
-                <FormControlLabel control={<Switch checked={Boolean(position.allow_scale_in)} onChange={(event) => updateConfigAtPath(['position', 'allow_scale_in'], event.target.checked)} />} label="Allow scale in" />
+                <FormControlLabel control={<Switch checked={Boolean(position.allow_scale_in)} onChange={(event) => updateConfigAtPath(['position', 'allow_scale_in'], event.target.checked)} />} label="분할 진입 허용" />
               </Grid>
             </Grid>
           </TabPanel>
 
           <TabPanel value={tabValue} index={5}>
-            <JsonSection label="Exit JSON" value={asObject(configJson.exit)} onChange={(next) => setConfigJson((prev) => updateNestedConfig(prev, ['exit'], next))} />
+            <JsonSection label="청산 JSON" value={asObject(configJson.exit)} onChange={(next) => setConfigJson((prev) => updateNestedConfig(prev, ['exit'], next))} />
           </TabPanel>
 
           <TabPanel value={tabValue} index={6}>
             <Grid container spacing={3} maxWidth={840}>
               <Grid item xs={12} sm={6}>
                 <TextField
-                  label="Daily Loss Limit %"
+                  label="일일 손실 제한 %"
                   type="number"
                   value={asNumber(risk.daily_loss_limit_pct, 0)}
                   onChange={updateNumberAtPath(['risk', 'daily_loss_limit_pct'])}
@@ -383,7 +489,7 @@ function StrategyEditForm({
               </Grid>
               <Grid item xs={12} sm={6}>
                 <TextField
-                  label="Max Strategy Drawdown %"
+                  label="전략 최대 낙폭 %"
                   type="number"
                   value={asNumber(risk.max_strategy_drawdown_pct, 0)}
                   onChange={updateNumberAtPath(['risk', 'max_strategy_drawdown_pct'])}
@@ -391,7 +497,7 @@ function StrategyEditForm({
                 />
               </Grid>
               <Grid item xs={12}>
-                <FormControlLabel control={<Switch checked={Boolean(risk.kill_switch_enabled)} onChange={(event) => updateConfigAtPath(['risk', 'kill_switch_enabled'], event.target.checked)} />} label="Enable kill switch" />
+                <FormControlLabel control={<Switch checked={Boolean(risk.kill_switch_enabled)} onChange={(event) => updateConfigAtPath(['risk', 'kill_switch_enabled'], event.target.checked)} />} label="킬 스위치 활성화" />
               </Grid>
             </Grid>
           </TabPanel>
@@ -400,19 +506,19 @@ function StrategyEditForm({
             <Grid container spacing={3} maxWidth={840}>
               <Grid item xs={12} sm={6}>
                 <FormControl fullWidth>
-                  <InputLabel>Entry Order Type</InputLabel>
-                  <Select value={String(execution.entry_order_type ?? 'market')} label="Entry Order Type" onChange={(event) => updateConfigAtPath(['execution', 'entry_order_type'], event.target.value)}>
-                    <MenuItem value="market">Market</MenuItem>
-                    <MenuItem value="limit">Limit</MenuItem>
+                  <InputLabel>진입 주문 유형</InputLabel>
+                  <Select value={String(execution.entry_order_type ?? 'market')} label="진입 주문 유형" onChange={(event) => updateConfigAtPath(['execution', 'entry_order_type'], event.target.value)}>
+                    <MenuItem value="market">시장가</MenuItem>
+                    <MenuItem value="limit">지정가</MenuItem>
                   </Select>
                 </FormControl>
               </Grid>
               <Grid item xs={12} sm={6}>
                 <FormControl fullWidth>
-                  <InputLabel>Fee Model</InputLabel>
-                  <Select value={String(execution.fee_model ?? 'per_fill')} label="Fee Model" onChange={(event) => updateConfigAtPath(['execution', 'fee_model'], event.target.value)}>
-                    <MenuItem value="per_fill">Per Fill</MenuItem>
-                    <MenuItem value="per_order">Per Order</MenuItem>
+                  <InputLabel>수수료 모델</InputLabel>
+                  <Select value={String(execution.fee_model ?? 'per_fill')} label="수수료 모델" onChange={(event) => updateConfigAtPath(['execution', 'fee_model'], event.target.value)}>
+                    <MenuItem value="per_fill">체결당</MenuItem>
+                    <MenuItem value="per_order">주문당</MenuItem>
                   </Select>
                 </FormControl>
               </Grid>
@@ -423,7 +529,7 @@ function StrategyEditForm({
             <Grid container spacing={3} maxWidth={840}>
               <Grid item xs={12} sm={6}>
                 <TextField
-                  label="Initial Capital"
+                  label="초기 자본"
                   type="number"
                   value={asNumber(backtest.initial_capital, 10000000)}
                   onChange={updateNumberAtPath(['backtest', 'initial_capital'], 10000000)}
@@ -432,7 +538,7 @@ function StrategyEditForm({
               </Grid>
               <Grid item xs={12} sm={6}>
                 <TextField
-                  label="Fee (BPS)"
+                  label="수수료 (BPS)"
                   type="number"
                   value={asNumber(backtest.fee_bps, 5)}
                   onChange={updateNumberAtPath(['backtest', 'fee_bps'], 5)}
@@ -444,19 +550,21 @@ function StrategyEditForm({
 
           <TabPanel value={tabValue} index={9}>
             <Stack spacing={2}>
-              <Typography variant="h6">Diff Preview</Typography>
-              <Typography variant="body2" color="text.secondary">{diffRows.length === 0 ? 'No changes detected.' : `${diffRows.length} changed fields`}</Typography>
+              <Typography variant="h6">변경 미리보기</Typography>
+              <Typography variant="body2" color="text.secondary">
+                {diffRows.length === 0 ? '변경된 항목이 없습니다.' : `${diffRows.length}개 필드가 변경되었습니다.`}
+              </Typography>
               {diffRows.map((row) => (
                 <Card key={row.path} variant="outlined">
                   <Box sx={{ p: 2 }}>
                     <Typography variant="subtitle2" fontFamily="monospace">{row.path}</Typography>
                     <Grid container spacing={2} sx={{ mt: 0.5 }}>
                       <Grid item xs={12} md={6}>
-                        <Typography variant="caption" color="text.secondary">Before</Typography>
+                        <Typography variant="caption" color="text.secondary">이전 값</Typography>
                         <Box sx={{ mt: 0.5, p: 1.5, borderRadius: 1, bgcolor: 'bg.surface2', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>{JSON.stringify(row.before, null, 2)}</Box>
                       </Grid>
                       <Grid item xs={12} md={6}>
-                        <Typography variant="caption" color="text.secondary">After</Typography>
+                        <Typography variant="caption" color="text.secondary">변경 값</Typography>
                         <Box sx={{ mt: 0.5, p: 1.5, borderRadius: 1, bgcolor: 'rgba(34, 231, 107, 0.05)', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>{JSON.stringify(row.after, null, 2)}</Box>
                       </Grid>
                     </Grid>
@@ -467,7 +575,7 @@ function StrategyEditForm({
           </TabPanel>
 
           <TabPanel value={tabValue} index={10}>
-            {jsonError ? <Alert severity="error" sx={{ mb: 2 }}>Invalid JSON: {jsonError}</Alert> : null}
+            {jsonError ? <Alert severity="error" sx={{ mb: 2 }}>잘못된 JSON: {jsonError}</Alert> : null}
             <TextField
               multiline
               fullWidth
@@ -479,7 +587,7 @@ function StrategyEditForm({
                   setConfigJson(parsed)
                   setJsonError(null)
                 } catch (error) {
-                  setJsonError(error instanceof Error ? error.message : 'Invalid JSON')
+                  setJsonError(error instanceof Error ? error.message : '잘못된 JSON')
                 }
               }}
               sx={{ '& .MuiInputBase-root': { minHeight: 520, alignItems: 'flex-start' }, '& textarea': { fontFamily: 'monospace', minHeight: '520px !important' } }}
@@ -488,11 +596,11 @@ function StrategyEditForm({
 
           <TabPanel value={tabValue} index={11}>
             {!validationResult ? (
-              <Typography color="text.secondary">Validate the current draft to see errors and warnings before saving.</Typography>
+              <Typography color="text.secondary">저장 전에 현재 초안을 검증해 오류와 경고를 확인하세요.</Typography>
             ) : (
               <Stack spacing={3}>
                 <Alert severity={validationResult.valid ? 'success' : 'error'}>
-                  {validationResult.valid ? 'Draft configuration is valid.' : 'Draft configuration has validation errors.'}
+                  {validationResult.valid ? '초안 설정이 유효합니다.' : '초안 설정에 검증 오류가 있습니다.'}
                 </Alert>
                 {validationResult.errors.map((issue, index) => (
                   <Alert key={`${issue.code}-${index}`} severity="error" variant="outlined">[{issue.code}] {issue.message}</Alert>
@@ -507,11 +615,11 @@ function StrategyEditForm({
       </Card>
 
       <Box sx={{ mt: 2, p: 2, border: '1px solid', borderColor: 'border.default', borderRadius: 2, display: 'flex', justifyContent: 'space-between', gap: 2 }}>
-        <Typography variant="body2" color="text.secondary">Form + JSON stay in sync, and saving preserves the old version.</Typography>
+        <Typography variant="body2" color="text.secondary">폼과 JSON은 동기화되며 저장 시 기존 버전은 유지됩니다.</Typography>
         <Stack direction="row" spacing={2}>
-          <Button variant="outlined" startIcon={<X size={16} />} onClick={onBack}>Discard</Button>
+          <Button variant="outlined" startIcon={<X size={16} />} onClick={onBack}>취소</Button>
           <Button variant="contained" startIcon={<Save size={16} />} disabled={!!jsonError || createVersionMutation.isPending || updateStrategyMutation.isPending} onClick={handleSave}>
-            {createVersionMutation.isPending || updateStrategyMutation.isPending ? 'Saving...' : 'Save as New Version'}
+            {createVersionMutation.isPending || updateStrategyMutation.isPending ? '저장 중...' : '새 버전으로 저장'}
           </Button>
         </Stack>
       </Box>
@@ -530,7 +638,7 @@ export default function StrategyEditPage() {
   }
 
   if (!strategy) {
-    return <Typography>Strategy not found</Typography>
+    return <Typography>전략을 찾을 수 없습니다</Typography>
   }
 
   return (
@@ -543,3 +651,4 @@ export default function StrategyEditPage() {
     />
   )
 }
+

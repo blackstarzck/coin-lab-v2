@@ -18,18 +18,22 @@ import {
   Skeleton,
   Tooltip,
 } from '@mui/material'
-import { format } from 'date-fns'
-
-import { useLogs } from '@/features/logs/api'
-
 import { AlertCircle } from 'lucide-react'
 
-const CHANNELS = [
-  { label: 'System', value: 'system' },
-  { label: 'Strategy Execution', value: 'strategy-execution' },
-  { label: 'Order Simulation', value: 'order-simulation' },
-  { label: 'Risk Control', value: 'risk-control' },
-  { label: 'Documents', value: 'documents' },
+import { useLogs, type LogChannel } from '@/features/logs/api'
+import {
+  formatDateTime,
+  translateLogChannel,
+  translateLogLevel,
+  translateMode,
+} from '@/shared/lib/i18n'
+
+const CHANNELS: Array<{ label: string; value: LogChannel }> = [
+  { label: '시스템', value: 'system' },
+  { label: '전략 실행', value: 'strategy-execution' },
+  { label: '주문 시뮬레이션', value: 'order-simulation' },
+  { label: '리스크 제어', value: 'risk-control' },
+  { label: '문서', value: 'documents' },
 ]
 
 function getLevelColor(level: string) {
@@ -59,7 +63,7 @@ export default function LogsPage() {
     setTabIndex(newValue)
   }
 
-  const filteredLogs = logs?.filter(log => {
+  const filteredLogs = logs?.filter((log) => {
     if (levelFilter !== 'all' && log.level !== levelFilter) return false
     if (searchQuery && !log.message.toLowerCase().includes(searchQuery.toLowerCase())) return false
     return true
@@ -68,7 +72,7 @@ export default function LogsPage() {
   return (
     <Box sx={{ p: 3, display: 'flex', flexDirection: 'column', gap: 3 }}>
       <Typography variant="h4" sx={{ fontWeight: 600 }}>
-        System Logs
+        로그
       </Typography>
 
       <Box sx={{ borderBottom: 1, borderColor: 'border.default' }}>
@@ -87,14 +91,14 @@ export default function LogsPage() {
             size="small"
             sx={{ minWidth: 120 }}
           >
-            <MenuItem value="all">All Levels</MenuItem>
-            <MenuItem value="debug">Debug</MenuItem>
-            <MenuItem value="info">Info</MenuItem>
-            <MenuItem value="warning">Warning</MenuItem>
-            <MenuItem value="error">Error</MenuItem>
+            <MenuItem value="all">전체 레벨</MenuItem>
+            <MenuItem value="debug">디버그</MenuItem>
+            <MenuItem value="info">정보</MenuItem>
+            <MenuItem value="warning">경고</MenuItem>
+            <MenuItem value="error">오류</MenuItem>
           </Select>
           <TextField
-            placeholder="Search logs..."
+            placeholder="로그 검색..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             size="small"
@@ -110,23 +114,23 @@ export default function LogsPage() {
           <Table size="small">
             <TableHead>
               <TableRow>
-                <TableCell sx={{ color: 'text.tertiary', fontSize: 12, width: 160 }}>Time</TableCell>
-                <TableCell sx={{ color: 'text.tertiary', fontSize: 12, width: 100 }}>Level</TableCell>
-                <TableCell sx={{ color: 'text.tertiary', fontSize: 12, width: 90 }}>Mode</TableCell>
-                <TableCell sx={{ color: 'text.tertiary', fontSize: 12, width: 160 }}>Trace</TableCell>
-                <TableCell sx={{ color: 'text.tertiary', fontSize: 12, width: 150 }}>Source</TableCell>
-                <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }}>Message</TableCell>
+                <TableCell sx={{ color: 'text.tertiary', fontSize: 12, width: 160 }}>시간</TableCell>
+                <TableCell sx={{ color: 'text.tertiary', fontSize: 12, width: 100 }}>레벨</TableCell>
+                <TableCell sx={{ color: 'text.tertiary', fontSize: 12, width: 90 }}>모드</TableCell>
+                <TableCell sx={{ color: 'text.tertiary', fontSize: 12, width: 160 }}>추적 ID</TableCell>
+                <TableCell sx={{ color: 'text.tertiary', fontSize: 12, width: 150 }}>소스</TableCell>
+                <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }}>메시지</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {filteredLogs?.map((log) => (
                 <TableRow key={log.id} hover sx={{ '& td': { py: 0.5 } }}>
                   <TableCell sx={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
-                    {format(new Date(log.timestamp), 'yyyy-MM-dd HH:mm:ss')}
+                    {formatDateTime(log.timestamp)}
                   </TableCell>
                   <TableCell>
                     <Chip
-                      label={log.level.toUpperCase()}
+                      label={translateLogLevel(log.level)}
                       size="small"
                       sx={{
                         bgcolor: getLevelColor(log.level),
@@ -138,13 +142,13 @@ export default function LogsPage() {
                     />
                   </TableCell>
                   <TableCell sx={{ color: 'text.secondary', fontSize: '0.85rem' }}>
-                    {log.mode ?? '-'}
+                    {log.mode ? translateMode(log.mode) : '-'}
                   </TableCell>
                   <TableCell sx={{ color: 'text.secondary', fontFamily: 'monospace', fontSize: '0.8rem' }}>
                     {log.trace_id ?? '-'}
                   </TableCell>
                   <TableCell sx={{ color: 'text.secondary', fontSize: '0.85rem' }}>
-                    {log.channel}
+                    {translateLogChannel(log.channel)}
                   </TableCell>
                   <TableCell sx={{ maxWidth: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     <Tooltip title={log.message} placement="top-start">
@@ -160,7 +164,7 @@ export default function LogsPage() {
                   <TableCell colSpan={6} align="center" sx={{ py: 8, color: 'text.secondary' }}>
                     <AlertCircle size={48} style={{ margin: '0 auto', opacity: 0.5, marginBottom: 16 }} />
                     <Typography variant="h6" color="text.secondary">
-                      No log entries for this channel.
+                      이 채널에는 로그가 없습니다.
                     </Typography>
                   </TableCell>
                 </TableRow>

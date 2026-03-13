@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from ...core.config import Settings
@@ -18,6 +19,14 @@ from ...domain.entities.session import (
 )
 from ...infrastructure.repositories.lab_store import LabStore
 from ...schemas.session import SessionCreate
+from .strategy_symbol_resolver import (
+    resolve_strategy_symbols,
+    strategy_static_symbols,
+    strategy_universe_mode,
+)
+
+if TYPE_CHECKING:
+    from .stream_service import StreamService
 
 
 def _now() -> datetime:
@@ -26,7 +35,7 @@ def _now() -> datetime:
 
 def _performance_defaults() -> dict[str, object]:
     return {
-        "initial_capital": 1000000,
+        "initial_capital": 1_000_000,
         "realized_pnl": 0.0,
         "realized_pnl_pct": 0.0,
         "unrealized_pnl": 0.0,
@@ -46,9 +55,10 @@ def _health_defaults() -> dict[str, object]:
 
 
 class SessionService:
-    def __init__(self, store: LabStore, settings: Settings) -> None:
+    def __init__(self, store: LabStore, settings: Settings, stream_service: StreamService | None = None) -> None:
         self.store = store
         self.settings = settings
+        self.stream_service = stream_service
 
     def list_sessions(
         self,
@@ -80,22 +90,23 @@ class SessionService:
         if not strategy_version.is_validated:
             raise CoinLabError(
                 error_code=ErrorCode.DSL_VALIDATION_FAILED,
-                message="Strategy version must be validated before starting a session",
+                message="Validate the strategy version before starting a session.",
                 status_code=400,
                 details={"strategy_version_id": data.strategy_version_id},
             )
+
         mode = ExecutionMode(str(data.mode))
         if mode == ExecutionMode.LIVE and (not data.confirm_live or not data.acknowledge_risk):
             raise CoinLabError(
                 error_code=ErrorCode.LIVE_CONFIRMATION_REQUIRED,
-                message="LIVE mode requires confirm_live and acknowledge_risk",
+                message="confirm_live and acknowledge_risk are required in live mode.",
                 status_code=400,
                 details={"confirm_live": data.confirm_live, "acknowledge_risk": data.acknowledge_risk},
             )
         if mode == ExecutionMode.LIVE:
             self._validate_live_mode(data)
 
-        symbol_scope = self._build_symbol_scope(data.symbol_scope)
+        symbol_scope = self._build_symbol_scope(data.symbol_scope, strategy_version.config_json)
         now = _now()
         session = Session(
             id=f"ses_{uuid4().hex[:12]}",
@@ -113,20 +124,22 @@ class SessionService:
             created_at=now,
             updated_at=now,
         )
-        return self.store.create_session(session)
+        created = self.store.create_session(session)
+        self._publish_monitoring_snapshot(force=True)
+        return created
 
     def _validate_live_mode(self, data: SessionCreate) -> None:
         if not self.settings.live_trading_enabled:
             raise CoinLabError(
                 error_code=ErrorCode.LIVE_MODE_SWITCH_BLOCKED,
-                message="LIVE mode is disabled by COIN_LAB_LIVE_TRADING_ENABLED",
+                message="Live trading is disabled by configuration.",
                 status_code=400,
                 details={"live_trading_enabled": self.settings.live_trading_enabled},
             )
         if not self.settings.upbit_access_key or not self.settings.upbit_secret_key:
             raise CoinLabError(
                 error_code=ErrorCode.LIVE_API_KEY_MISSING,
-                message="LIVE mode requires configured Upbit API keys",
+                message="Upbit API keys are required in live mode.",
                 status_code=400,
                 details={
                     "has_access_key": bool(self.settings.upbit_access_key),
@@ -136,14 +149,14 @@ class SessionService:
         if self.settings.live_order_notional_krw < 5000:
             raise CoinLabError(
                 error_code=ErrorCode.LIVE_MODE_SWITCH_BLOCKED,
-                message="LIVE mode requires COIN_LAB_LIVE_ORDER_NOTIONAL_KRW >= 5000",
+                message="COIN_LAB_LIVE_ORDER_NOTIONAL_KRW must be at least 5000 in live mode.",
                 status_code=400,
                 details={"live_order_notional_krw": self.settings.live_order_notional_krw},
             )
         if self.settings.live_require_order_test and not data.order_test_passed:
             raise CoinLabError(
                 error_code=ErrorCode.LIVE_MODE_SWITCH_BLOCKED,
-                message="LIVE mode requires order_test_passed=true when COIN_LAB_LIVE_REQUIRE_ORDER_TEST is enabled",
+                message="order_test_passed=true is required when COIN_LAB_LIVE_REQUIRE_ORDER_TEST is enabled.",
                 status_code=400,
                 details={
                     "live_require_order_test": self.settings.live_require_order_test,
@@ -151,21 +164,28 @@ class SessionService:
                 },
             )
 
-    def _build_symbol_scope(self, requested_scope: dict[str, object]) -> dict[str, object]:
+    def _build_symbol_scope(self, requested_scope: dict[str, object], strategy_config: dict[str, object]) -> dict[str, object]:
         symbol_scope = dict(requested_scope)
-        active_symbols = symbol_scope.get("active_symbols")
-        if not isinstance(active_symbols, list) or not active_symbols:
-            active_symbols = symbol_scope.get("symbols")
-        resolved_symbols = [str(item) for item in active_symbols] if isinstance(active_symbols, list) else []
+        requested_symbols = symbol_scope.get("active_symbols")
+        if not isinstance(requested_symbols, list) or not requested_symbols:
+            requested_symbols = symbol_scope.get("symbols")
 
-        if not resolved_symbols:
-            resolved_symbols = [
+        resolved_symbols = resolve_strategy_symbols(
+            requested_symbols,
+            strategy_config,
+            (
                 str(item.get("symbol"))
                 for item in self.store.get_current_universe()
                 if isinstance(item, dict) and item.get("symbol")
-            ]
-        if not resolved_symbols:
-            resolved_symbols = ["KRW-BTC", "KRW-ETH", "KRW-SOL", "KRW-XRP"]
+            ),
+        )
+
+        if strategy_universe_mode(strategy_config) == "static" and "mode" not in symbol_scope:
+            symbol_scope["mode"] = "static"
+
+        configured_static_symbols = strategy_static_symbols(strategy_config)
+        if configured_static_symbols and "symbols" not in symbol_scope:
+            symbol_scope["symbols"] = configured_static_symbols
 
         max_symbols_raw = symbol_scope.get("max_symbols")
         max_symbols = max_symbols_raw if isinstance(max_symbols_raw, int) and max_symbols_raw > 0 else len(resolved_symbols)
@@ -178,6 +198,7 @@ class SessionService:
         updated = self.store.update_session_status(session_id, SessionStatus.STOPPING.value)
         if updated is None:
             raise NotFoundError("Session not found", {"session_id": session_id})
+        self._publish_monitoring_snapshot(force=True)
         return {
             "session_id": session_id,
             "previous_status": previous_status,
@@ -191,6 +212,7 @@ class SessionService:
         updated = self.store.update_session_status(session_id, SessionStatus.STOPPING.value)
         if updated is None:
             raise NotFoundError("Session not found", {"session_id": session_id})
+        self._publish_monitoring_snapshot(force=True)
         return {
             "session_id": session_id,
             "previous_status": previous_status,
@@ -232,3 +254,7 @@ class SessionService:
 
     def session_performance(self, session_id: str) -> dict[str, object]:
         return self.get_session_performance(session_id)
+
+    def _publish_monitoring_snapshot(self, force: bool = False) -> None:
+        if self.stream_service is not None:
+            self.stream_service.publish_monitoring_snapshot(force=force)

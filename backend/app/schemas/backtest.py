@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 class BacktestRunRequest(BaseModel):
     strategy_version_id: str
-    symbols: list[str] = Field(min_length=1)
+    symbols: list[str] = Field(default_factory=list)
     timeframes: list[str] = Field(min_length=1)
     date_from: datetime
     date_to: datetime

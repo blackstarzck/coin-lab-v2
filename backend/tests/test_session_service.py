@@ -8,6 +8,7 @@ from app.core.error_codes import ErrorCode
 from app.core.exceptions import CoinLabError
 from app.infrastructure.repositories.in_memory_lab_store import InMemoryLabStore
 from app.schemas.session import SessionCreate
+from tests.support import populate_test_store
 
 
 def _settings(**overrides: object) -> Settings:
@@ -32,8 +33,7 @@ def _settings(**overrides: object) -> Settings:
 
 def _store() -> InMemoryLabStore:
     store = InMemoryLabStore()
-    store.seed_defaults()
-    return store
+    return populate_test_store(store)
 
 
 def test_create_paper_session_populates_runtime_defaults() -> None:
@@ -145,3 +145,27 @@ def test_live_session_succeeds_when_all_guards_pass() -> None:
     assert session.mode.value == "LIVE"
     assert session.status.value == "RUNNING"
     assert session.symbol_scope_json["active_symbols"] == ["KRW-BTC"]
+
+
+def test_create_session_uses_strategy_static_symbols_by_default() -> None:
+    store = _store()
+    version = store.get_strategy_version("stv_001")
+    assert version is not None
+    version.config_json["universe"] = {
+        "mode": "static",
+        "symbols": ["KRW-BTC", "KRW-XRP"],
+    }
+    store.update_strategy_version(version)
+    service = SessionService(store, _settings())
+
+    session = service.create_session(
+        SessionCreate(
+            mode="PAPER",
+            strategy_version_id="stv_001",
+            symbol_scope={},
+        )
+    )
+
+    assert session.symbol_scope_json["mode"] == "static"
+    assert session.symbol_scope_json["symbols"] == ["KRW-BTC", "KRW-XRP"]
+    assert session.symbol_scope_json["active_symbols"] == ["KRW-BTC", "KRW-XRP"]

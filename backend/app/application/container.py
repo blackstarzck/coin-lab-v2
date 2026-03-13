@@ -87,7 +87,7 @@ class Container:
             settings=settings,
             store=store,
             strategy_service=StrategyService(store, strategy_validator),
-            session_service=SessionService(store, settings),
+            session_service=SessionService(store, settings, stream_service),
             backtest_service=BacktestService(store),
             monitoring_service=MonitoringService(store),
             log_service=LogService(store),

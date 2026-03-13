@@ -5,7 +5,6 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from app.domain.seed_data import default_seed_data
 from app.domain.entities.session import (
     BacktestRun,
     BacktestTrade,
@@ -250,69 +249,7 @@ class PostgresLabStore(LabStore):
     # ── seed ──────────────────────────────────────────────────────────────
 
     def seed_defaults(self) -> None:
-        seed_data = default_seed_data(datetime.now(UTC))
-        conn = self._get_conn()
-        try:
-            with conn.cursor(cursor_factory=self._cursor_factory()) as cur:
-                cur.execute("SELECT COUNT(*) AS universe_count FROM universe_symbols")
-                universe_count = int(cur.fetchone()["universe_count"])
-                cur.execute("SELECT COUNT(*) AS log_count FROM strategy_execution_logs")
-                log_count = int(cur.fetchone()["log_count"])
-
-            for bundle in seed_data.strategy_bundles:
-                if self.get_strategy(bundle.strategy.id) is None:
-                    seed_strategy = bundle.strategy
-                    self.create_strategy(
-                        Strategy(
-                            id=seed_strategy.id,
-                            strategy_key=seed_strategy.strategy_key,
-                            name=seed_strategy.name,
-                            strategy_type=seed_strategy.strategy_type,
-                            description=seed_strategy.description,
-                            is_active=seed_strategy.is_active,
-                            latest_version_id=None,
-                            latest_version_no=None,
-                            labels=seed_strategy.labels,
-                            last_7d_return_pct=seed_strategy.last_7d_return_pct,
-                            last_7d_win_rate=seed_strategy.last_7d_win_rate,
-                            created_at=seed_strategy.created_at,
-                            updated_at=seed_strategy.updated_at,
-                        )
-                    )
-                if self.get_strategy_version(bundle.version.id) is None:
-                    self.create_strategy_version(bundle.version)
-                strategy = self.get_strategy(bundle.strategy.id)
-                if strategy is not None and (
-                    strategy.latest_version_id != bundle.version.id
-                    or strategy.latest_version_no != bundle.version.version_no
-                ):
-                    strategy.latest_version_id = bundle.version.id
-                    strategy.latest_version_no = bundle.version.version_no
-                    strategy.updated_at = bundle.strategy.updated_at
-                    self.update_strategy(strategy)
-
-            if universe_count == 0:
-                with conn.cursor() as cur:
-                    for item in seed_data.universe_symbols:
-                        cur.execute(
-                            """INSERT INTO universe_symbols
-                               (symbol, turnover_24h_krw, surge_score, selected, updated_at)
-                               VALUES (%s, %s, %s, %s, %s)""",
-                            (
-                                item["symbol"],
-                                item["turnover_24h_krw"],
-                                item["surge_score"],
-                                item["selected"],
-                                datetime.now(UTC),
-                            ),
-                        )
-                conn.commit()
-
-            if log_count == 0:
-                for entry in seed_data.logs:
-                    self.append_log(entry)
-        finally:
-            self._put_conn(conn)
+        return None
 
     # ── strategies ────────────────────────────────────────────────────────
 

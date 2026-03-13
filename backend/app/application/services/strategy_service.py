@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
 import json
 from datetime import UTC, datetime
@@ -9,6 +10,7 @@ from ...core.exceptions import NotFoundError
 from ...domain.entities.strategy import Strategy, StrategyType, StrategyVersion
 from ...infrastructure.repositories.lab_store import LabStore
 from ...schemas.strategy import StrategyCreate, StrategyUpdate, StrategyVersionCreate
+from .strategy_performance import StrategyPerformanceSnapshot, build_strategy_performance_map
 from .strategy_validator import StrategyValidator
 
 
@@ -29,6 +31,7 @@ class StrategyService:
         page_size: int = 20,
     ) -> tuple[list[Strategy], int]:
         rows = self.store.list_strategies()
+        performance_by_strategy = self._performance_by_strategy()
         if is_active is not None:
             rows = [item for item in rows if item.is_active == is_active]
         if label is not None:
@@ -36,18 +39,18 @@ class StrategyService:
         total = len(rows)
         start = max(page - 1, 0) * page_size
         end = start + page_size
-        return rows[start:end], total
+        return [self._with_strategy_performance(item, performance_by_strategy.get(item.id)) for item in rows[start:end]], total
 
     def get_strategy(self, strategy_id: str) -> Strategy:
         strategy = self.store.get_strategy(strategy_id)
         if strategy is None:
-            raise NotFoundError("Strategy not found", {"strategy_id": strategy_id})
-        return strategy
+            raise NotFoundError("전략을 찾을 수 없습니다", {"strategy_id": strategy_id})
+        return self._with_strategy_performance(strategy, self._performance_by_strategy().get(strategy.id))
 
     def get_strategy_version(self, version_id: str) -> StrategyVersion:
         version = self.store.get_strategy_version(version_id)
         if version is None:
-            raise NotFoundError("Strategy version not found", {"version_id": version_id})
+            raise NotFoundError("전략 버전을 찾을 수 없습니다", {"version_id": version_id})
         return version
 
     def list_strategy_versions(self, strategy_id: str) -> list[StrategyVersion]:
@@ -127,3 +130,28 @@ class StrategyService:
 
     def validate_strategy_version(self, version_id: str, strict: bool) -> dict[str, object]:
         return self.validate_version(version_id, strict)
+
+    def _performance_by_strategy(self) -> dict[str, StrategyPerformanceSnapshot]:
+        sessions = self.store.list_sessions()
+        version_ids = list(
+            dict.fromkeys(
+                session.strategy_version_id
+                for session in sessions
+                if session.strategy_version_id
+            )
+        )
+        versions = self.store.list_strategy_versions_by_ids(version_ids)
+        return build_strategy_performance_map(sessions, versions)
+
+    def _with_strategy_performance(
+        self,
+        strategy: Strategy,
+        performance: StrategyPerformanceSnapshot | None,
+    ) -> Strategy:
+        if performance is None:
+            return replace(strategy, last_7d_return_pct=None, last_7d_win_rate=None)
+        return replace(
+            strategy,
+            last_7d_return_pct=performance.last_7d_return_pct,
+            last_7d_win_rate=performance.last_7d_win_rate,
+        )

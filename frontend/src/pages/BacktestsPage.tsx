@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Box,
   Card,
@@ -22,7 +22,6 @@ import {
   Skeleton,
 } from '@mui/material'
 import { Play, History, BarChart2, AlertCircle } from 'lucide-react'
-import { format, formatDistanceToNow } from 'date-fns'
 
 import {
   useBacktests,
@@ -31,9 +30,17 @@ import {
   useBacktestTrades,
   useBacktestEquityCurve,
 } from '@/features/backtests/api'
-import { useStrategies } from '@/features/strategies/api'
+import { useStrategies, useStrategyVersions } from '@/features/strategies/api'
 import { LineChart } from '@/shared/charts/LineChart'
 import type { BacktestRunStatus } from '@/entities/backtest/types'
+import { getStrategyStaticSymbols } from '@/entities/strategy/config'
+import {
+  formatDate,
+  formatDateTime,
+  formatRelativeTime,
+  translateBacktestStatus,
+  translateExitReason,
+} from '@/shared/lib/i18n'
 
 function getStatusColor(status: BacktestRunStatus) {
   switch (status) {
@@ -50,6 +57,8 @@ function getStatusColor(status: BacktestRunStatus) {
   }
 }
 
+const DEFAULT_SYMBOLS_INPUT = 'KRW-BTC, KRW-ETH'
+
 export default function BacktestsPage() {
   const [tab, setTab] = useState(0)
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
@@ -60,22 +69,22 @@ export default function BacktestsPage() {
 
   const handleSelectRun = (id: string) => {
     setSelectedRunId(id)
-    setTab(2) // Switch to Results tab
+      setTab(2)
   }
 
   return (
     <Box sx={{ p: 3, display: 'flex', flexDirection: 'column', gap: 3 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <Typography variant="h4" sx={{ fontWeight: 600 }}>
-          Backtests
+          백테스트
         </Typography>
       </Box>
 
       <Box sx={{ borderBottom: 1, borderColor: 'border.default' }}>
         <Tabs value={tab} onChange={handleTabChange}>
-          <Tab icon={<Play size={18} />} iconPosition="start" label="Run New" />
-          <Tab icon={<History size={18} />} iconPosition="start" label="History" />
-          <Tab icon={<BarChart2 size={18} />} iconPosition="start" label="Results" disabled={!selectedRunId && tab !== 2} />
+          <Tab icon={<Play size={18} />} iconPosition="start" label="새 실행" />
+          <Tab icon={<History size={18} />} iconPosition="start" label="이력" />
+          <Tab icon={<BarChart2 size={18} />} iconPosition="start" label="결과" disabled={!selectedRunId && tab !== 2} />
         </Tabs>
       </Box>
 
@@ -91,11 +100,21 @@ function RunNewTab({ onRunCreated }: { onRunCreated: (id: string) => void }) {
   const runBacktest = useRunBacktest()
 
   const [strategyId, setStrategyId] = useState('')
-  const [symbols, setSymbols] = useState('BTCUSDT,ETHUSDT')
+  const [symbols, setSymbols] = useState(DEFAULT_SYMBOLS_INPUT)
   const [timeframes, setTimeframes] = useState('1h,4h')
   const [dateFrom, setDateFrom] = useState('2023-01-01')
   const [dateTo, setDateTo] = useState('2023-12-31')
   const [initialCapital, setInitialCapital] = useState('10000')
+  const { data: strategyVersions } = useStrategyVersions(strategyId)
+
+  useEffect(() => {
+    if (!strategyId) {
+      return
+    }
+
+    const defaultSymbols = getStrategyStaticSymbols((strategyVersions?.[0]?.config_json ?? {}) as Record<string, unknown>)
+    setSymbols(defaultSymbols.length > 0 ? defaultSymbols.join(', ') : DEFAULT_SYMBOLS_INPUT)
+  }, [strategyId, strategyVersions])
 
   const handleRun = async () => {
     if (!strategyId) return
@@ -106,7 +125,7 @@ function RunNewTab({ onRunCreated }: { onRunCreated: (id: string) => void }) {
     try {
       const result = await runBacktest.mutateAsync({
         strategy_version_id: strategy.latest_version_id,
-        symbols: symbols.split(',').map(s => s.trim()),
+        symbols: symbols.split(',').map(s => s.trim()).filter(Boolean),
         timeframes: timeframes.split(',').map(s => s.trim()),
         date_from: new Date(dateFrom).toISOString(),
         date_to: new Date(dateTo).toISOString(),
@@ -116,22 +135,22 @@ function RunNewTab({ onRunCreated }: { onRunCreated: (id: string) => void }) {
         onRunCreated(result.id)
       }
     } catch (error) {
-      console.error('Failed to run backtest', error)
+      console.error('백테스트 실행에 실패했습니다', error)
     }
   }
 
   return (
     <Card>
       <CardContent sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-        <Typography variant="h6">Configure Backtest</Typography>
+        <Typography variant="h6">백테스트 설정</Typography>
 
         <Grid container spacing={3}>
           <Grid item xs={12} md={6}>
             <FormControl fullWidth>
-              <InputLabel>Strategy</InputLabel>
+              <InputLabel>전략</InputLabel>
               <Select
                 value={strategyId}
-                label="Strategy"
+                label="전략"
                 onChange={(e) => setStrategyId(e.target.value)}
                 disabled={isLoadingStrategies}
               >
@@ -147,7 +166,7 @@ function RunNewTab({ onRunCreated }: { onRunCreated: (id: string) => void }) {
           <Grid item xs={12} md={6}>
             <TextField
               fullWidth
-              label="Initial Capital"
+              label="초기 자본"
               type="number"
               value={initialCapital}
               onChange={(e) => setInitialCapital(e.target.value)}
@@ -158,16 +177,17 @@ function RunNewTab({ onRunCreated }: { onRunCreated: (id: string) => void }) {
           <Grid item xs={12} md={6}>
             <TextField
               fullWidth
-              label="Symbols (comma separated)"
+              label="심볼 (쉼표로 구분)"
               value={symbols}
               onChange={(e) => setSymbols(e.target.value)}
+              helperText="정적 전략은 기본 코인 목록이 자동 입력됩니다. 비우면 전략 기본값을 사용합니다."
             />
           </Grid>
 
           <Grid item xs={12} md={6}>
             <TextField
               fullWidth
-              label="Timeframes (comma separated)"
+              label="타임프레임 (쉼표로 구분)"
               value={timeframes}
               onChange={(e) => setTimeframes(e.target.value)}
             />
@@ -176,7 +196,7 @@ function RunNewTab({ onRunCreated }: { onRunCreated: (id: string) => void }) {
           <Grid item xs={12} md={6}>
             <TextField
               fullWidth
-              label="Date From"
+              label="시작일"
               type="date"
               value={dateFrom}
               onChange={(e) => setDateFrom(e.target.value)}
@@ -187,7 +207,7 @@ function RunNewTab({ onRunCreated }: { onRunCreated: (id: string) => void }) {
           <Grid item xs={12} md={6}>
             <TextField
               fullWidth
-              label="Date To"
+              label="종료일"
               type="date"
               value={dateTo}
               onChange={(e) => setDateTo(e.target.value)}
@@ -205,7 +225,7 @@ function RunNewTab({ onRunCreated }: { onRunCreated: (id: string) => void }) {
             disabled={!strategyId || runBacktest.isPending}
             startIcon={<Play size={18} />}
           >
-            {runBacktest.isPending ? 'Starting...' : 'Run Backtest'}
+            {runBacktest.isPending ? '시작 중...' : '백테스트 실행'}
           </Button>
         </Box>
       </CardContent>
@@ -226,7 +246,7 @@ function HistoryTab({ onSelectRun }: { onSelectRun: (id: string) => void }) {
         <CardContent sx={{ py: 8, textAlign: 'center' }}>
           <AlertCircle size={48} style={{ margin: '0 auto', opacity: 0.5, marginBottom: 16 }} />
           <Typography variant="h6" color="text.secondary">
-            No backtests yet. Run your first backtest to see results.
+            아직 백테스트가 없습니다. 첫 백테스트를 실행해 결과를 확인하세요.
           </Typography>
         </CardContent>
       </Card>
@@ -239,14 +259,14 @@ function HistoryTab({ onSelectRun }: { onSelectRun: (id: string) => void }) {
         <TableHead>
           <TableRow>
             <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }}>ID</TableCell>
-            <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }}>Status</TableCell>
-            <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }}>Strategy Version</TableCell>
-            <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }}>Symbols</TableCell>
-            <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }}>Date Range</TableCell>
-            <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }} align="right">Return</TableCell>
+            <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }}>상태</TableCell>
+            <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }}>전략 버전</TableCell>
+            <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }}>심볼</TableCell>
+            <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }}>기간</TableCell>
+            <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }} align="right">수익률</TableCell>
             <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }} align="right">MDD</TableCell>
-            <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }} align="right">Win Rate</TableCell>
-            <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }} align="right">Created</TableCell>
+            <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }} align="right">승률</TableCell>
+            <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }} align="right">생성 시각</TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
@@ -262,7 +282,7 @@ function HistoryTab({ onSelectRun }: { onSelectRun: (id: string) => void }) {
               </TableCell>
               <TableCell>
                 <Chip
-                  label={run.status}
+                  label={translateBacktestStatus(run.status)}
                   size="small"
                   sx={{
                     bgcolor: getStatusColor(run.status),
@@ -277,7 +297,7 @@ function HistoryTab({ onSelectRun }: { onSelectRun: (id: string) => void }) {
               </TableCell>
               <TableCell>{run.symbols.join(', ')}</TableCell>
               <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                {format(new Date(run.date_from), 'MMM d, yy')} - {format(new Date(run.date_to), 'MMM d, yy')}
+                {formatDate(run.date_from)} - {formatDate(run.date_to)}
               </TableCell>
               <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums', color: run.metrics?.total_return_pct >= 0 ? 'status.success' : 'status.danger' }}>
                 {run.metrics?.total_return_pct != null ? `${run.metrics.total_return_pct.toFixed(2)}%` : '-'}
@@ -289,7 +309,7 @@ function HistoryTab({ onSelectRun }: { onSelectRun: (id: string) => void }) {
                 {run.metrics?.win_rate_pct != null ? `${run.metrics.win_rate_pct.toFixed(2)}%` : '-'}
               </TableCell>
               <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums', color: 'text.secondary' }}>
-                {formatDistanceToNow(new Date(run.created_at), { addSuffix: true })}
+                {formatRelativeTime(run.created_at)}
               </TableCell>
             </TableRow>
           ))}
@@ -310,7 +330,7 @@ function ResultsTab({ runId }: { runId: string | null }) {
         <CardContent sx={{ py: 8, textAlign: 'center' }}>
           <BarChart2 size={48} style={{ margin: '0 auto', opacity: 0.5, marginBottom: 16 }} />
           <Typography variant="h6" color="text.secondary">
-            Select a backtest from History to view details
+            이력 탭에서 백테스트를 선택해 상세 결과를 확인하세요
           </Typography>
         </CardContent>
       </Card>
@@ -335,7 +355,7 @@ function ResultsTab({ runId }: { runId: string | null }) {
           <Card sx={{ height: '100%' }}>
             <CardContent>
               <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                Total Return
+                총 수익률
               </Typography>
               <Typography
                 variant="h4"
@@ -353,7 +373,7 @@ function ResultsTab({ runId }: { runId: string | null }) {
           <Card sx={{ height: '100%' }}>
             <CardContent>
               <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                Max Drawdown
+                최대 낙폭
               </Typography>
               <Typography variant="h4" sx={{ fontVariantNumeric: 'tabular-nums', color: 'status.danger' }}>
                 {run.metrics?.max_drawdown_pct != null ? `${run.metrics.max_drawdown_pct.toFixed(2)}%` : '-'}
@@ -365,7 +385,7 @@ function ResultsTab({ runId }: { runId: string | null }) {
           <Card sx={{ height: '100%' }}>
             <CardContent>
               <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                Win Rate
+                승률
               </Typography>
               <Typography variant="h4" sx={{ fontVariantNumeric: 'tabular-nums' }}>
                 {run.metrics?.win_rate_pct != null ? `${run.metrics.win_rate_pct.toFixed(2)}%` : '-'}
@@ -377,7 +397,7 @@ function ResultsTab({ runId }: { runId: string | null }) {
           <Card sx={{ height: '100%' }}>
             <CardContent>
               <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                Profit Factor
+                손익비
               </Typography>
               <Typography variant="h4" sx={{ fontVariantNumeric: 'tabular-nums' }}>
                 {run.metrics?.profit_factor != null ? run.metrics.profit_factor.toFixed(2) : '-'}
@@ -389,7 +409,7 @@ function ResultsTab({ runId }: { runId: string | null }) {
           <Card sx={{ height: '100%' }}>
             <CardContent>
               <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                Trade Count
+                거래 수
               </Typography>
               <Typography variant="h4" sx={{ fontVariantNumeric: 'tabular-nums' }}>
                 {run.metrics?.trade_count != null ? run.metrics.trade_count : '-'}
@@ -401,7 +421,7 @@ function ResultsTab({ runId }: { runId: string | null }) {
           <Card sx={{ height: '100%' }}>
             <CardContent>
               <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                Avg Hold (min)
+                평균 보유 시간(분)
               </Typography>
               <Typography variant="h4" sx={{ fontVariantNumeric: 'tabular-nums' }}>
                 {run.metrics?.avg_hold_minutes != null ? run.metrics.avg_hold_minutes.toFixed(1) : '-'}
@@ -413,7 +433,7 @@ function ResultsTab({ runId }: { runId: string | null }) {
           <Card sx={{ height: '100%' }}>
             <CardContent>
               <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                Sharpe Ratio
+                샤프 지수
               </Typography>
               <Typography variant="h4" sx={{ fontVariantNumeric: 'tabular-nums' }}>
                 {run.metrics?.sharpe_ratio != null ? run.metrics.sharpe_ratio.toFixed(2) : '-'}
@@ -425,13 +445,13 @@ function ResultsTab({ runId }: { runId: string | null }) {
 
       <Card>
         <CardContent>
-          <Typography variant="h6" gutterBottom>Equity Curve</Typography>
+          <Typography variant="h6" gutterBottom>자산 곡선</Typography>
           <Box sx={{ height: 400 }}>
             {chartData.length > 0 ? (
               <LineChart data={chartData} height={400} />
             ) : (
               <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <Typography color="text.secondary">No equity curve data available</Typography>
+                <Typography color="text.secondary">자산 곡선 데이터가 없습니다</Typography>
               </Box>
             )}
           </Box>
@@ -440,20 +460,20 @@ function ResultsTab({ runId }: { runId: string | null }) {
 
       <Card>
         <CardContent sx={{ pb: 0 }}>
-          <Typography variant="h6" gutterBottom>Trades ({run.metrics?.trade_count || 0})</Typography>
+          <Typography variant="h6" gutterBottom>거래 ({run.metrics?.trade_count || 0})</Typography>
         </CardContent>
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }}>Symbol</TableCell>
-              <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }}>Entry Time</TableCell>
-              <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }}>Exit Time</TableCell>
-              <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }} align="right">Entry Price</TableCell>
-              <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }} align="right">Exit Price</TableCell>
-              <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }} align="right">Qty</TableCell>
-              <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }} align="right">PnL</TableCell>
-              <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }} align="right">PnL %</TableCell>
-              <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }}>Reason</TableCell>
+              <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }}>심볼</TableCell>
+              <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }}>진입 시각</TableCell>
+              <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }}>청산 시각</TableCell>
+              <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }} align="right">진입가</TableCell>
+              <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }} align="right">청산가</TableCell>
+              <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }} align="right">수량</TableCell>
+              <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }} align="right">손익</TableCell>
+              <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }} align="right">손익률</TableCell>
+              <TableCell sx={{ color: 'text.tertiary', fontSize: 12 }}>사유</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -461,10 +481,10 @@ function ResultsTab({ runId }: { runId: string | null }) {
               <TableRow key={trade.id} hover>
                 <TableCell>{trade.symbol}</TableCell>
                 <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                  {format(new Date(trade.entry_time), 'MM/dd HH:mm')}
+                  {formatDateTime(trade.entry_time)}
                 </TableCell>
                 <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                  {format(new Date(trade.exit_time), 'MM/dd HH:mm')}
+                  {formatDateTime(trade.exit_time)}
                 </TableCell>
                 <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>
                   {trade.entry_price.toFixed(2)}
@@ -494,14 +514,14 @@ function ResultsTab({ runId }: { runId: string | null }) {
                   {trade.pnl_pct > 0 ? '+' : ''}{trade.pnl_pct.toFixed(2)}%
                 </TableCell>
                 <TableCell>
-                  <Chip label={trade.exit_reason} size="small" variant="outlined" />
+                  <Chip label={translateExitReason(trade.exit_reason)} size="small" variant="outlined" />
                 </TableCell>
               </TableRow>
             ))}
             {(!trades || trades.length === 0) && (
               <TableRow>
                 <TableCell colSpan={9} align="center" sx={{ py: 4, color: 'text.secondary' }}>
-                  No trades executed in this backtest
+                  이 백테스트에서는 거래가 발생하지 않았습니다
                 </TableCell>
               </TableRow>
             )}

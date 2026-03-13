@@ -26,7 +26,7 @@ export interface StrategyCard {
   is_active: boolean;
   is_validated: boolean;
   active_session_count: number;
-  last_7d_return_pct: number;
+  last_7d_return_pct: number | null;
   last_signal_at: string | null;
 }
 
@@ -42,6 +42,7 @@ export interface UniverseSymbol {
 }
 
 export interface RiskOverviewItem {
+  id: string;
   session_id: string;
   severity: string;
   code: string;

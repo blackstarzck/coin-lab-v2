@@ -28,7 +28,7 @@ import {
 import type { ChipProps } from '@mui/material'
 import { Eye, Edit2, Play, Activity } from 'lucide-react'
 import { useStrategies } from '@/features/strategies/api'
-import { formatDistanceToNow } from 'date-fns'
+import { formatRelativeTime, translateStrategyType } from '@/shared/lib/i18n'
 
 export default function StrategiesPage() {
   const navigate = useNavigate()
@@ -66,35 +66,35 @@ export default function StrategiesPage() {
   return (
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h4">Strategies</Typography>
-        <Button variant="contained" color="primary">Create Strategy</Button>
+        <Typography variant="h4">전략</Typography>
+        <Button variant="contained" color="primary">전략 생성</Button>
       </Box>
 
       <Card sx={{ mb: 3 }}>
         <CardContent sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
           <TextField
             size="small"
-            placeholder="Search by name or key..."
+            placeholder="이름 또는 키로 검색..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             sx={{ minWidth: 200 }}
           />
           <FormControl size="small" sx={{ minWidth: 120 }}>
-            <InputLabel>Type</InputLabel>
+            <InputLabel>유형</InputLabel>
             <Select
               value={typeFilter}
-              label="Type"
+              label="유형"
               onChange={(e) => setTypeFilter(e.target.value)}
             >
-              <MenuItem value="all">All</MenuItem>
+              <MenuItem value="all">전체</MenuItem>
               <MenuItem value="dsl">DSL</MenuItem>
-              <MenuItem value="plugin">Plugin</MenuItem>
-              <MenuItem value="hybrid">Hybrid</MenuItem>
+              <MenuItem value="plugin">플러그인</MenuItem>
+              <MenuItem value="hybrid">하이브리드</MenuItem>
             </Select>
           </FormControl>
           <FormControlLabel
             control={<Switch checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)} />}
-            label="Active Only"
+            label="활성 전략만"
           />
         </CardContent>
       </Card>
@@ -103,14 +103,14 @@ export default function StrategiesPage() {
         <Table size="small" sx={{ '& .MuiTableCell-root': { py: 1.5 } }}>
           <TableHead>
             <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 12 } }}>
-              <TableCell>Strategy Name</TableCell>
-              <TableCell>Latest Version</TableCell>
-              <TableCell>Type</TableCell>
-              <TableCell>Tags</TableCell>
-              <TableCell>Active</TableCell>
-              <TableCell align="right">7d Return</TableCell>
-              <TableCell>Updated</TableCell>
-              <TableCell align="right">Actions</TableCell>
+              <TableCell>전략명</TableCell>
+              <TableCell>최신 버전</TableCell>
+              <TableCell>유형</TableCell>
+              <TableCell>태그</TableCell>
+              <TableCell>활성</TableCell>
+              <TableCell align="right">최근 7일 수익률</TableCell>
+              <TableCell>업데이트</TableCell>
+              <TableCell align="right">작업</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -130,8 +130,8 @@ export default function StrategiesPage() {
             ) : filteredStrategies.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={8} align="center" sx={{ py: 8 }}>
-                  <Typography color="text.secondary" mb={2}>No strategies found. Create your first strategy to get started.</Typography>
-                  <Button variant="outlined" color="primary">Create Strategy</Button>
+                  <Typography color="text.secondary" mb={2}>전략이 없습니다. 첫 전략을 만들어 시작하세요.</Typography>
+                  <Button variant="outlined" color="primary">전략 생성</Button>
                 </TableCell>
               </TableRow>
             ) : (
@@ -160,7 +160,7 @@ export default function StrategiesPage() {
                   </TableCell>
                   <TableCell>
                     <Chip 
-                      label={strategy.strategy_type.toUpperCase()} 
+                      label={translateStrategyType(strategy.strategy_type)} 
                       size="small" 
                       color={getTypeColor(strategy.strategy_type)}
                       sx={{ fontSize: 10, height: 20 }}
@@ -198,32 +198,32 @@ export default function StrategiesPage() {
                         {strategy.last_7d_return_pct > 0 ? '+' : ''}{strategy.last_7d_return_pct.toFixed(2)}%
                       </Typography>
                     ) : (
-                      <Typography variant="body2" color="text.disabled">-</Typography>
+                      <Typography variant="body2" color="text.disabled">데이터 없음</Typography>
                     )}
                   </TableCell>
                   <TableCell>
                     <Typography variant="body2" color="text.secondary">
-                      {formatDistanceToNow(new Date(strategy.updated_at), { addSuffix: true })}
+                      {formatRelativeTime(strategy.updated_at)}
                     </Typography>
                   </TableCell>
                   <TableCell align="right">
                     <Stack direction="row" spacing={0.5} justifyContent="flex-end">
-                      <Tooltip title="View">
+                      <Tooltip title="보기">
                         <IconButton size="small" onClick={(e) => { e.stopPropagation(); navigate(`/strategies/${strategy.id}`); }}>
                           <Eye size={16} />
                         </IconButton>
                       </Tooltip>
-                      <Tooltip title="Edit">
+                      <Tooltip title="편집">
                         <IconButton size="small" onClick={(e) => { e.stopPropagation(); navigate(`/strategies/${strategy.id}/edit`); }}>
                           <Edit2 size={16} />
                         </IconButton>
                       </Tooltip>
-                      <Tooltip title="Run Backtest">
+                      <Tooltip title="백테스트 실행">
                         <IconButton size="small" onClick={(e) => { e.stopPropagation(); }}>
                           <Play size={16} />
                         </IconButton>
                       </Tooltip>
-                      <Tooltip title="Start Session">
+                      <Tooltip title="세션 시작">
                         <IconButton size="small" onClick={(e) => { e.stopPropagation(); }}>
                           <Activity size={16} />
                         </IconButton>
