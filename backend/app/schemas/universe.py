@@ -14,6 +14,15 @@ class UniverseSymbolResponse(BaseModel):
     risk_blocked: bool
 
 
+class UniverseCatalogItemResponse(BaseModel):
+    symbol: str
+    korean_name: str
+    english_name: str
+    market_warning: str | None = None
+    turnover_24h_krw: float
+    trade_price: float | None = None
+
+
 class UniversePreviewRequest(BaseModel):
     symbol_scope: dict[str, object]
 

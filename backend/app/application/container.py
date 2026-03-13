@@ -91,7 +91,7 @@ class Container:
             backtest_service=BacktestService(store),
             monitoring_service=MonitoringService(store),
             log_service=LogService(store),
-            universe_service=UniverseService(store),
+            universe_service=UniverseService(store, settings.upbit_rest_base_url),
             stream_service=stream_service,
             health_service=HealthService(settings, store),
             strategy_validator=strategy_validator,

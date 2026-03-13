@@ -160,6 +160,7 @@ export interface UniverseSection {
   mode: 'dynamic' | 'static';
   sources?: UniverseSource[];
   symbols?: string[];
+  catalog_symbols?: string[];
   max_symbols?: number;
   refresh_sec?: number;
   filters?: UniverseFilters;

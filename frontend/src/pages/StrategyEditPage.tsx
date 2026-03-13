@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import type { ChangeEvent, ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
@@ -32,13 +32,13 @@ import {
   useValidateDraft,
   useValidateVersion,
 } from '@/features/strategies/api'
-import { useCurrentUniverse } from '@/features/universe/api'
+import type { UniverseCatalogItem } from '@/features/universe/api'
+import { useUniverseCatalog } from '@/features/universe/api'
 import type { Strategy, StrategyVersion, ValidationResult } from '@/entities/strategy/types'
 import { translateStrategyType } from '@/shared/lib/i18n'
 
 type JsonObject = Record<string, unknown>
 const DEFAULT_STRATEGY_SYMBOLS = ['KRW-BTC']
-const COMMON_STRATEGY_SYMBOLS = ['KRW-BTC', 'KRW-ETH', 'KRW-SOL', 'KRW-XRP', 'KRW-DOGE']
 
 interface DiffRow {
   path: string
@@ -68,6 +68,27 @@ function normalizeSymbolList(value: unknown, fallback = DEFAULT_STRATEGY_SYMBOLS
   return normalized.length > 0 ? normalized : [...fallback]
 }
 
+function sortSymbols(symbols: string[]): string[] {
+  return [...symbols].sort((left, right) => {
+    if (left === 'KRW-BTC') return -1
+    if (right === 'KRW-BTC') return 1
+    return left.localeCompare(right)
+  })
+}
+
+function formatTurnoverLabel(value: number | null | undefined): string {
+  if (!value) {
+    return '24h 거래대금 정보 없음'
+  }
+  if (value >= 1_000_000_000_000) {
+    return `24h 거래대금 ${(value / 1_000_000_000_000).toFixed(2)}조 KRW`
+  }
+  if (value >= 100_000_000) {
+    return `24h 거래대금 ${(value / 100_000_000).toFixed(1)}억 KRW`
+  }
+  return `24h 거래대금 ${Math.round(value).toLocaleString('ko-KR')} KRW`
+}
+
 function asNumber(value: unknown, fallback = 0): number {
   return typeof value === 'number' ? value : fallback
 }
@@ -94,17 +115,26 @@ function updateNestedConfig(config: JsonObject, path: string[], value: unknown):
   return nextConfig
 }
 
+function normalizeUniverseConfig(universe: JsonObject): JsonObject {
+  const symbols = sortSymbols(normalizeSymbolList(universe.symbols))
+  const catalogSymbols = sortSymbols(normalizeSymbolList([...asArray(universe.catalog_symbols), ...symbols], symbols))
+  return {
+    ...universe,
+    mode: 'static',
+    symbols,
+    catalog_symbols: catalogSymbols,
+    max_symbols: symbols.length,
+  }
+}
+
+function updateUniverseConfig(config: JsonObject, updater: (universe: JsonObject) => JsonObject): JsonObject {
+  return updateNestedConfig(config, ['universe'], normalizeUniverseConfig(updater(asObject(config.universe))))
+}
+
 function normalizeEditableConfig(config: JsonObject): JsonObject {
-  const universe = asObject(config.universe)
-  const symbols = normalizeSymbolList(universe.symbols)
   return {
     ...config,
-    universe: {
-      ...universe,
-      mode: 'static',
-      symbols,
-      max_symbols: symbols.length,
-    },
+    universe: normalizeUniverseConfig(asObject(config.universe)),
   }
 }
 
@@ -124,16 +154,9 @@ function buildDiffRows(before: unknown, after: unknown, path = ''): DiffRow[] {
 }
 
 function buildDraftConfig(baseConfig: JsonObject, name: string, description: string, labels: string[], notes: string): JsonObject {
-  const universe = asObject(baseConfig.universe)
-  const symbols = normalizeSymbolList(universe.symbols)
   return {
     ...baseConfig,
-    universe: {
-      ...universe,
-      mode: 'static',
-      symbols,
-      max_symbols: symbols.length,
-    },
+    universe: normalizeUniverseConfig(asObject(baseConfig.universe)),
     name,
     description,
     labels,
@@ -193,8 +216,15 @@ function StrategyEditForm({
   const createVersionMutation = useCreateStrategyVersion()
   const validateDraftMutation = useValidateDraft()
   const validateVersionMutation = useValidateVersion()
-  const { data: currentUniverse } = useCurrentUniverse()
   const initialConfig = normalizeEditableConfig(asObject(latestVersion?.config_json))
+  const [symbolSearch, setSymbolSearch] = useState('')
+  const deferredSymbolSearch = useDeferredValue(symbolSearch.trim())
+  const { data: topTurnoverMarkets = [], isLoading: isTopTurnoverLoading } = useUniverseCatalog({ limit: 10 })
+  const { data: searchResults = [], isLoading: isSearchLoading } = useUniverseCatalog({
+    query: deferredSymbolSearch,
+    limit: 20,
+    enabled: deferredSymbolSearch.length > 0,
+  })
 
   const [tabValue, setTabValue] = useState(0)
   const [name, setName] = useState(strategy.name)
@@ -212,25 +242,19 @@ function StrategyEditForm({
 
   const market = asObject(configJson.market)
   const universe = asObject(configJson.universe)
-  const selectedSymbols = normalizeSymbolList(universe.symbols)
+  const selectedSymbols = sortSymbols(normalizeSymbolList(universe.symbols))
+  const addedSymbols = sortSymbols(normalizeSymbolList(universe.catalog_symbols, selectedSymbols))
   const position = asObject(configJson.position)
   const risk = asObject(configJson.risk)
   const execution = asObject(configJson.execution)
   const backtest = asObject(configJson.backtest)
-  const availableSymbols = useMemo(() => {
-    const items = currentUniverse?.map((item) => item.symbol) ?? []
-    return Array.from(new Set([...selectedSymbols, ...COMMON_STRATEGY_SYMBOLS, ...items]))
-      .sort((left, right) => {
-        const leftSelected = selectedSymbols.includes(left)
-        const rightSelected = selectedSymbols.includes(right)
-        if (leftSelected !== rightSelected) {
-          return leftSelected ? -1 : 1
-        }
-        if (left === 'KRW-BTC') return -1
-        if (right === 'KRW-BTC') return 1
-        return left.localeCompare(right)
-      })
-  }, [currentUniverse, selectedSymbols])
+  const catalogInfoMap = useMemo(() => {
+    const map = new Map<string, UniverseCatalogItem>()
+    for (const item of [...topTurnoverMarkets, ...searchResults]) {
+      map.set(item.symbol, item)
+    }
+    return map
+  }, [searchResults, topTurnoverMarkets])
 
   const updateConfigAtPath = (path: string[], value: unknown) => {
     setConfigJson((prev) => updateNestedConfig(prev, path, value))
@@ -244,20 +268,33 @@ function StrategyEditForm({
     updateConfigAtPath(path, parseNumberInput(event.target.value, fallback))
   }
 
+  const handleAddCatalogSymbol = (symbol: string) => {
+    setConfigJson((prev) => updateUniverseConfig(prev, (currentUniverse) => ({
+      ...currentUniverse,
+      catalog_symbols: [...asArray(currentUniverse.catalog_symbols), symbol],
+    })))
+  }
+
+  const handleRemoveCatalogSymbol = (symbol: string) => {
+    setConfigJson((prev) => updateUniverseConfig(prev, (currentUniverse) => ({
+      ...currentUniverse,
+      symbols: asArray(currentUniverse.symbols).filter((item) => String(item).trim().toUpperCase() !== symbol),
+      catalog_symbols: asArray(currentUniverse.catalog_symbols).filter((item) => String(item).trim().toUpperCase() !== symbol),
+    })))
+  }
+
   const handleToggleSymbol = (symbol: string) => {
-    const nextSymbols = selectedSymbols.includes(symbol)
-      ? selectedSymbols.filter((item) => item !== symbol)
-      : [...selectedSymbols, symbol]
-    const normalizedSymbols = normalizeSymbolList(nextSymbols)
-    setConfigJson((prev) => updateNestedConfig(
-      updateNestedConfig(
-        updateNestedConfig(prev, ['universe', 'mode'], 'static'),
-        ['universe', 'symbols'],
-        normalizedSymbols,
-      ),
-      ['universe', 'max_symbols'],
-      normalizedSymbols.length,
-    ))
+    setConfigJson((prev) => updateUniverseConfig(prev, (currentUniverse) => {
+      const currentSelected = normalizeSymbolList(currentUniverse.symbols)
+      const nextSymbols = currentSelected.includes(symbol)
+        ? currentSelected.filter((item) => item !== symbol)
+        : [...currentSelected, symbol]
+      return {
+        ...currentUniverse,
+        symbols: nextSymbols,
+        catalog_symbols: [...asArray(currentUniverse.catalog_symbols), symbol],
+      }
+    }))
   }
 
   useEffect(() => {
@@ -389,41 +426,176 @@ function StrategyEditForm({
               <Grid item xs={12}>
                 <Stack spacing={1.5}>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Typography variant="subtitle2">실험 코인 선택</Typography>
+                    <Typography variant="subtitle2">거래대금 상위 코인</Typography>
                     <Typography variant="caption" color="text.secondary">
-                      {selectedSymbols.length}개 선택
+                      상위 10개
                     </Typography>
                   </Box>
                   <Grid container spacing={1.5}>
-                    {availableSymbols.map((symbol) => {
+                    {(topTurnoverMarkets.length > 0 ? topTurnoverMarkets : []).map((item, index) => {
+                      const isAdded = addedSymbols.includes(item.symbol)
+                      return (
+                        <Grid item xs={12} sm={6} md={4} key={item.symbol}>
+                          <Card
+                            variant="outlined"
+                            sx={{
+                              borderColor: isAdded ? 'primary.main' : 'divider',
+                              bgcolor: isAdded ? 'rgba(0, 200, 120, 0.05)' : 'transparent',
+                            }}
+                          >
+                            <Box sx={{ px: 1.5, py: 1.5 }}>
+                              <Stack spacing={1.25}>
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 1 }}>
+                                  <Box sx={{ minWidth: 0 }}>
+                                    <Typography variant="caption" color="text.secondary">
+                                      #{index + 1}
+                                    </Typography>
+                                    <Typography variant="body2" fontWeight={700}>
+                                      {item.symbol}
+                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary">
+                                      {item.korean_name}
+                                    </Typography>
+                                  </Box>
+                                  <Button
+                                    size="small"
+                                    variant={isAdded ? 'outlined' : 'contained'}
+                                    disabled={isAdded}
+                                    onClick={() => handleAddCatalogSymbol(item.symbol)}
+                                  >
+                                    {isAdded ? '추가됨' : '추가'}
+                                  </Button>
+                                </Box>
+                                <Typography variant="caption" color="text.secondary">
+                                  {formatTurnoverLabel(item.turnover_24h_krw)}
+                                </Typography>
+                              </Stack>
+                            </Box>
+                          </Card>
+                        </Grid>
+                      )
+                    })}
+                  </Grid>
+                  {isTopTurnoverLoading ? (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <CircularProgress size={16} />
+                      <Typography variant="caption" color="text.secondary">상위 코인 정보를 불러오는 중입니다.</Typography>
+                    </Box>
+                  ) : null}
+                </Stack>
+              </Grid>
+
+              <Grid item xs={12}>
+                <Stack spacing={1.5}>
+                  <Typography variant="subtitle2">코인 검색</Typography>
+                  <TextField
+                    label="심볼 또는 코인명 검색"
+                    value={symbolSearch}
+                    onChange={(event) => setSymbolSearch(event.target.value)}
+                    helperText="검색 결과에서 먼저 추가한 뒤, 아래 추가한 코인에서 실제 실험 대상으로 선택합니다."
+                    fullWidth
+                  />
+                  {deferredSymbolSearch ? (
+                    <Grid container spacing={1.5}>
+                      {searchResults.map((item) => {
+                        const isAdded = addedSymbols.includes(item.symbol)
+                        return (
+                          <Grid item xs={12} sm={6} md={4} key={item.symbol}>
+                            <Card variant="outlined">
+                              <Box sx={{ px: 1.5, py: 1.5 }}>
+                                <Stack spacing={1.25}>
+                                  <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 1 }}>
+                                    <Box sx={{ minWidth: 0 }}>
+                                      <Typography variant="body2" fontWeight={700}>
+                                        {item.symbol}
+                                      </Typography>
+                                      <Typography variant="caption" color="text.secondary">
+                                        {item.korean_name} · {item.english_name}
+                                      </Typography>
+                                    </Box>
+                                    <Button
+                                      size="small"
+                                      variant={isAdded ? 'outlined' : 'contained'}
+                                      disabled={isAdded}
+                                      onClick={() => handleAddCatalogSymbol(item.symbol)}
+                                    >
+                                      {isAdded ? '추가됨' : '추가'}
+                                    </Button>
+                                  </Box>
+                                  <Typography variant="caption" color="text.secondary">
+                                    {formatTurnoverLabel(item.turnover_24h_krw)}
+                                  </Typography>
+                                </Stack>
+                              </Box>
+                            </Card>
+                          </Grid>
+                        )
+                      })}
+                    </Grid>
+                  ) : (
+                    <Typography variant="caption" color="text.secondary">
+                      심볼, 한글명, 영문명으로 검색할 수 있습니다.
+                    </Typography>
+                  )}
+                  {deferredSymbolSearch && !isSearchLoading && searchResults.length === 0 ? (
+                    <Typography variant="caption" color="text.secondary">
+                      검색 결과가 없습니다.
+                    </Typography>
+                  ) : null}
+                  {isSearchLoading ? (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <CircularProgress size={16} />
+                      <Typography variant="caption" color="text.secondary">검색 중입니다.</Typography>
+                    </Box>
+                  ) : null}
+                </Stack>
+              </Grid>
+
+              <Grid item xs={12}>
+                <Stack spacing={1.5}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Typography variant="subtitle2">추가한 코인</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {addedSymbols.length}개 추가 / {selectedSymbols.length}개 선택
+                    </Typography>
+                  </Box>
+                  <Grid container spacing={1.5}>
+                    {addedSymbols.map((symbol) => {
                       const checked = selectedSymbols.includes(symbol)
+                      const item = catalogInfoMap.get(symbol)
                       return (
                         <Grid item xs={12} sm={6} md={4} key={symbol}>
                           <Card
                             variant="outlined"
-                            onClick={() => handleToggleSymbol(symbol)}
                             sx={{
-                              cursor: 'pointer',
                               borderColor: checked ? 'primary.main' : 'divider',
                               bgcolor: checked ? 'rgba(0, 200, 120, 0.08)' : 'transparent',
                               transition: 'border-color 0.2s ease, background-color 0.2s ease',
                             }}
                           >
-                            <Box sx={{ px: 1.5, py: 1.25, display: 'flex', alignItems: 'center', gap: 1 }}>
-                              <Checkbox
-                                checked={checked}
-                                size="small"
-                                onClick={(event) => event.stopPropagation()}
-                                onChange={() => handleToggleSymbol(symbol)}
-                              />
-                              <Box sx={{ minWidth: 0 }}>
-                                <Typography variant="body2" fontWeight={600}>
-                                  {symbol}
-                                </Typography>
+                            <Box sx={{ px: 1.5, py: 1.5 }}>
+                              <Stack spacing={1}>
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 1 }}>
+                                  <Box sx={{ minWidth: 0 }}>
+                                    <Typography variant="body2" fontWeight={700}>
+                                      {symbol}
+                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary">
+                                      {item?.korean_name ?? symbol.replace('KRW-', '')}
+                                    </Typography>
+                                  </Box>
+                                  <IconButton size="small" onClick={() => handleRemoveCatalogSymbol(symbol)}>
+                                    <X size={14} />
+                                  </IconButton>
+                                </Box>
                                 <Typography variant="caption" color="text.secondary">
-                                  {symbol.replace('KRW-', '')}
+                                  {formatTurnoverLabel(item?.turnover_24h_krw)}
                                 </Typography>
-                              </Box>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                  <Checkbox checked={checked} onChange={() => handleToggleSymbol(symbol)} />
+                                  <Typography variant="body2">실험 대상에 포함</Typography>
+                                </Box>
+                              </Stack>
                             </Box>
                           </Card>
                         </Grid>
@@ -431,7 +603,7 @@ function StrategyEditForm({
                     })}
                   </Grid>
                   <Typography variant="caption" color="text.secondary">
-                    기본 선택은 KRW-BTC입니다. 선택한 코인이 이 전략의 기본 실험 대상이 됩니다.
+                    기본 선택은 KRW-BTC입니다. 검색으로 추가한 코인은 저장 후에도 유지되며, 체크된 코인만 실제 실험 대상으로 사용됩니다.
                   </Typography>
                 </Stack>
               </Grid>

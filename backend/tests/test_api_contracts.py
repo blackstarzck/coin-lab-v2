@@ -114,6 +114,37 @@ def test_tc_api_004_session_create_uses_single_strategy_version_id() -> None:
     assert data["status"] in {"PENDING", "RUNNING"}
 
 
+def test_tc_api_005_universe_catalog_response_shape(client: TestClient, container, monkeypatch) -> None:
+    monkeypatch.setattr(
+        container.universe_service,
+        "catalog",
+        lambda quote="KRW", query=None, limit=10: [
+            {
+                "symbol": "KRW-BTC",
+                "korean_name": "비트코인",
+                "english_name": "Bitcoin",
+                "market_warning": "NONE",
+                "turnover_24h_krw": 900_000_000_000,
+                "trade_price": 150_000_000,
+            }
+        ][:limit],
+    )
+
+    response = client.get("/api/v1/universe/catalog", params={"limit": 1})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    _assert_trace_and_timestamp(body)
+    assert isinstance(body["data"], list)
+    assert len(body["data"]) == 1
+    item = body["data"][0]
+    assert item["symbol"] == "KRW-BTC"
+    assert isinstance(item["korean_name"], str)
+    assert isinstance(item["english_name"], str)
+    assert isinstance(item["turnover_24h_krw"], (int, float))
+
+
 def test_tc_api_002b_not_found_error_shape() -> None:
     response = client.get("/api/v1/strategies/nonexistent_999")
 
