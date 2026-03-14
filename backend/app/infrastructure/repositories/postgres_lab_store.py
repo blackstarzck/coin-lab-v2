@@ -236,7 +236,19 @@ class PostgresLabStore(LabStore):
         return self._pool.getconn()
 
     def _put_conn(self, conn: Any) -> None:
-        self._pool.putconn(conn)
+        try:
+            from psycopg2.extensions import TRANSACTION_STATUS_IDLE
+
+            if getattr(conn, "closed", False):
+                self._pool.putconn(conn, close=True)
+                return
+
+            if conn.get_transaction_status() != TRANSACTION_STATUS_IDLE:
+                conn.rollback()
+
+            self._pool.putconn(conn)
+        except Exception:
+            self._pool.putconn(conn, close=True)
 
     def _cursor_factory(self) -> Any:
         from psycopg2.extras import RealDictCursor
@@ -936,18 +948,22 @@ class PostgresLabStore(LabStore):
                     tuple(params),
                 )
                 rows = cur.fetchall()
-            logs = [_row_to_log_entry(r, channel) for r in rows]
-            session_ids = {entry.session_id for entry in logs if entry.session_id}
-            session_modes = {
-                session_id: self.get_session(session_id).mode.value
-                for session_id in session_ids
-                if self.get_session(session_id) is not None
-            }
-            for entry in logs:
-                entry.mode = session_modes.get(entry.session_id)
-            return logs
         finally:
             self._put_conn(conn)
+
+        logs = [_row_to_log_entry(r, channel) for r in rows]
+        session_ids = {entry.session_id for entry in logs if entry.session_id}
+        session_modes: dict[str, str] = {}
+
+        for current_session_id in session_ids:
+            session = self.get_session(current_session_id)
+            if session is not None:
+                session_modes[current_session_id] = session.mode.value
+
+        for entry in logs:
+            entry.mode = session_modes.get(entry.session_id)
+
+        return logs
 
     # ── universe ──────────────────────────────────────────────────────────
 

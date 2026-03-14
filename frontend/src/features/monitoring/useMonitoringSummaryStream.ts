@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useEffectEvent, useRef, useState } from 'react'
+import { startTransition, useEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { env } from '@/shared/config/env'
 import { monitoringKeys, type MonitoringSummary } from './api'
@@ -28,72 +28,90 @@ function toMonitoringWebSocketUrl(baseUrl: string): string {
 
 export function useMonitoringSummaryStream() {
   const queryClient = useQueryClient()
-  const websocketRef = useRef<WebSocket | null>(null)
-  const reconnectTimerRef = useRef<number | null>(null)
-  const reconnectAttemptRef = useRef(0)
-  const shouldReconnectRef = useRef(true)
   const [isConnected, setIsConnected] = useState(false)
 
-  const clearReconnectTimer = useEffectEvent(() => {
-    if (reconnectTimerRef.current === null) {
-      return
-    }
-    window.clearTimeout(reconnectTimerRef.current)
-    reconnectTimerRef.current = null
-  })
+  useEffect(() => {
+    let websocket: WebSocket | null = null
+    let reconnectTimer: number | null = null
+    let reconnectAttempt = 0
+    let isDisposed = false
 
-  const handleMessage = useEffectEvent((event: MessageEvent<string>) => {
-    const message = JSON.parse(event.data) as MonitoringStreamMessage
-    if (message.type !== 'monitoring_snapshot') {
-      return
-    }
-    startTransition(() => {
-      queryClient.setQueryData(monitoringKeys.summary(), message.data)
-    })
-  })
-
-  const connect = useEffectEvent(() => {
-    clearReconnectTimer()
-    const websocket = new WebSocket(toMonitoringWebSocketUrl(env.API_BASE_URL))
-    websocketRef.current = websocket
-
-    websocket.onopen = () => {
-      reconnectAttemptRef.current = 0
-      setIsConnected(true)
+    const clearReconnectTimer = () => {
+      if (reconnectTimer === null) {
+        return
+      }
+      window.clearTimeout(reconnectTimer)
+      reconnectTimer = null
     }
 
-    websocket.onmessage = handleMessage
-
-    websocket.onerror = () => {
-      websocket.close()
-    }
-
-    websocket.onclose = () => {
-      setIsConnected(false)
-      websocketRef.current = null
-      if (!shouldReconnectRef.current) {
+    const connect = () => {
+      if (isDisposed || websocket !== null) {
         return
       }
 
-      const delayMs = Math.min(5_000, 500 * (2 ** reconnectAttemptRef.current))
-      reconnectAttemptRef.current += 1
-      reconnectTimerRef.current = window.setTimeout(() => {
-        connect()
-      }, delayMs)
-    }
-  })
+      clearReconnectTimer()
+      const nextSocket = new WebSocket(toMonitoringWebSocketUrl(env.API_BASE_URL))
+      websocket = nextSocket
 
-  useEffect(() => {
-    shouldReconnectRef.current = true
+      nextSocket.onopen = () => {
+        if (websocket !== nextSocket) {
+          return
+        }
+        reconnectAttempt = 0
+        setIsConnected(true)
+      }
+
+      nextSocket.onmessage = (event) => {
+        if (websocket !== nextSocket) {
+          return
+        }
+
+        const message = JSON.parse(event.data) as MonitoringStreamMessage
+        if (message.type !== 'monitoring_snapshot') {
+          return
+        }
+
+        startTransition(() => {
+          queryClient.setQueryData(monitoringKeys.summary(), message.data)
+        })
+      }
+
+      nextSocket.onerror = () => {
+        if (nextSocket.readyState === WebSocket.CONNECTING || nextSocket.readyState === WebSocket.OPEN) {
+          nextSocket.close()
+        }
+      }
+
+      nextSocket.onclose = () => {
+        if (websocket === nextSocket) {
+          websocket = null
+        }
+
+        if (isDisposed) {
+          return
+        }
+
+        setIsConnected(false)
+        const delayMs = Math.min(5_000, 500 * (2 ** reconnectAttempt))
+        reconnectAttempt += 1
+        reconnectTimer = window.setTimeout(() => {
+          connect()
+        }, delayMs)
+      }
+    }
+
     connect()
 
     return () => {
-      shouldReconnectRef.current = false
+      isDisposed = true
       clearReconnectTimer()
-      websocketRef.current?.close()
-      websocketRef.current = null
+      const currentSocket = websocket
+      websocket = null
+      if (currentSocket && (currentSocket.readyState === WebSocket.CONNECTING || currentSocket.readyState === WebSocket.OPEN)) {
+        currentSocket.close()
+      }
     }
-  }, [clearReconnectTimer, connect])
+  }, [queryClient])
 
   return { isConnected }
 }
