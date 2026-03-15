@@ -18,6 +18,7 @@ from ...domain.entities.session import (
     OrderType,
     Position,
     PositionState,
+    ReentryState,
     Session,
     Signal,
     SignalAction,
@@ -28,6 +29,10 @@ from .risk_guard_service import RiskGuardService
 from .signal_generator import SignalGenerator
 
 logger = get_logger(__name__)
+
+DEFAULT_INITIAL_CAPITAL = 1_000_000.0
+DEFAULT_POSITION_SIZE_MODE = "fixed_percent"
+DEFAULT_POSITION_SIZE_VALUE = 0.1
 
 
 class ExecutionService:
@@ -58,6 +63,29 @@ class ExecutionService:
         strategy_config: dict[str, object],
         snapshot: MarketSnapshot,
     ) -> dict[str, object]:
+        self._refresh_reentry_state(session, strategy_config, snapshot)
+        open_positions_for_symbol = [
+            position
+            for position in self._list_open_positions(session.id)
+            if position.symbol == snapshot.symbol
+        ]
+        exits = self.evaluate_exits(session, open_positions_for_symbol, strategy_config, snapshot)
+        if exits:
+            exit_signal = next(
+                (
+                    current.get("signal")
+                    for current in exits
+                    if isinstance(current, dict) and isinstance(current.get("signal"), Signal)
+                ),
+                None,
+            )
+            return {
+                "accepted": True,
+                "signal_state": SignalState.CONSUMED.value,
+                "signal": exit_signal,
+                "exits": exits,
+            }
+
         signal = self.signal_generator.evaluate(strategy_config, snapshot, session.id, session.strategy_version_id)
         if signal is None:
             return {"accepted": False, "signal_state": SignalState.EXPIRED.value, "reason_codes": ["ENTRY_NOT_MET"]}
@@ -78,6 +106,12 @@ class ExecutionService:
                 "Signal blocked by risk guard",
                 extra={"session_id": session.id, "symbol": signal.symbol, "blocked_codes": risk_result.blocked_codes},
             )
+            self._update_signal_explain(
+                signal,
+                decision="RISK_BLOCKED",
+                reason_codes=list(risk_result.blocked_codes),
+                risk_blocks=list(risk_result.blocked_codes),
+            )
             return {
                 "accepted": False,
                 "signal_state": SignalState.REJECTED.value,
@@ -88,6 +122,14 @@ class ExecutionService:
 
         if signal.action == SignalAction.ENTER.value:
             entry_result = self.execute_entry(session, signal, strategy_config, snapshot)
+            if not bool(entry_result.get("accepted", False)):
+                reason_codes = entry_result.get("reason_codes")
+                explain_codes = list(reason_codes) if isinstance(reason_codes, list) else signal.reason_codes
+                self._update_signal_explain(
+                    signal,
+                    decision="EXECUTION_REJECTED",
+                    reason_codes=explain_codes,
+                )
             return {
                 "accepted": bool(entry_result.get("accepted", False)),
                 "signal_state": SignalState.ACCEPTED.value,
@@ -190,6 +232,8 @@ class ExecutionService:
         candle_high = candle["high"]
         candle_low = candle["low"]
         current_price = candle["close"]
+        timeframe = self.signal_generator.primary_timeframe(strategy_config)
+        snapshot_key = self.signal_generator.snapshot_key(snapshot, timeframe)
 
         for position in positions:
             self._position_bars[position.id] = self._position_bars.get(position.id, 0) + 1
@@ -202,8 +246,36 @@ class ExecutionService:
                 exit_config=exit_cfg,
                 bar_count=bar_count,
             )
+            explain_payload: dict[str, object] | None = None
+            reason_codes: list[str] = []
+            if reason is None and isinstance(exit_cfg.get("logic"), str):
+                evaluation = self.signal_generator.evaluate_block(
+                    exit_cfg,
+                    snapshot,
+                    path="exit",
+                    default_timeframe=timeframe,
+                )
+                if evaluation.matched:
+                    reason = ExitReason.STRATEGY_EXIT
+                    reason_codes = evaluation.reason_codes or [ExitReason.STRATEGY_EXIT.value]
+                    explain_payload = self.signal_generator.build_explain_payload(
+                        snapshot_key=snapshot_key,
+                        decision=SignalAction.EXIT.value,
+                        result=evaluation,
+                    )
             if reason is None:
                 continue
+
+            if explain_payload is None:
+                reason_codes = [reason.value]
+                explain_payload = self._build_exit_explain_payload(
+                    snapshot=snapshot,
+                    snapshot_key=snapshot_key,
+                    exit_config=exit_cfg,
+                    position=position,
+                    current_price=current_price,
+                    reason=reason,
+                )
 
             fill = self.fill_engine.simulate_market_fill(
                 base_price=current_price,
@@ -226,13 +298,36 @@ class ExecutionService:
                 existing_position=position,
             )
             self.risk_guard.register_position(session.id, position.symbol, PositionState.CLOSED)
+            self._arm_reentry_guard(session, strategy_config, position.symbol)
             if reason in {ExitReason.STOP_LOSS, ExitReason.STOP_LOSS_INTRA_BAR_CONSERVATIVE, ExitReason.EMERGENCY_KILL}:
                 entry = position.avg_entry_price or 0.0
                 exit_price = fill.fill_price or entry
                 loss = max(0.0, (entry - exit_price) * position.quantity + fill.fee_amount)
                 self.risk_guard.record_daily_loss(session.id, loss)
 
-            results.append({"position": closed_position, "fill": fill, "exit_reason": reason.value})
+            exit_signal = Signal(
+                id=f"sig_{uuid4().hex[:12]}",
+                session_id=session.id,
+                strategy_version_id=session.strategy_version_id,
+                symbol=position.symbol,
+                timeframe=timeframe,
+                action=SignalAction.EXIT.value,
+                signal_price=current_price,
+                confidence=1.0,
+                reason_codes=reason_codes,
+                snapshot_time=snapshot.snapshot_time,
+                blocked=False,
+                explain_payload=explain_payload,
+            )
+
+            results.append(
+                {
+                    "position": closed_position,
+                    "fill": fill,
+                    "exit_reason": reason.value,
+                    "signal": exit_signal,
+                }
+            )
         return results
 
     def _create_order_intent(
@@ -325,14 +420,21 @@ class ExecutionService:
         if price <= 0:
             return 0.0
         pos_cfg = self._as_dict(strategy_config.get("position"))
-        size_mode = str(pos_cfg.get("size_mode", "fixed_qty"))
-        size_value = self._as_float(pos_cfg.get("size_value"), 1.0)
+        size_mode = str(pos_cfg.get("size_mode", DEFAULT_POSITION_SIZE_MODE))
+        size_value = self._as_float(pos_cfg.get("size_value"), DEFAULT_POSITION_SIZE_VALUE)
+        initial_capital = self._as_float(
+            self._as_dict(strategy_config.get("backtest")).get("initial_capital"),
+            DEFAULT_INITIAL_CAPITAL,
+        )
 
         if size_mode == "fixed_qty":
             return max(size_value, 0.0)
 
+        if size_mode == "fixed_amount":
+            qty = size_value / price
+            return max(qty, 0.0)
+
         if size_mode == "fixed_percent":
-            initial_capital = self._as_float(self._as_dict(strategy_config.get("backtest")).get("initial_capital"), 1_000_000.0)
             notional = initial_capital * size_value
             qty = notional / price
             return max(qty, 0.0)
@@ -391,6 +493,56 @@ class ExecutionService:
             if pos.session_id == session_id and pos.position_state in {PositionState.OPEN, PositionState.OPENING, PositionState.CLOSING}
         ]
 
+    def _update_signal_explain(
+        self,
+        signal: Signal,
+        *,
+        decision: str,
+        reason_codes: list[str] | None = None,
+        risk_blocks: list[str] | None = None,
+    ) -> None:
+        payload = dict(signal.explain_payload or {})
+        payload["decision"] = decision
+        if reason_codes is not None:
+            payload["reason_codes"] = list(reason_codes)
+        if risk_blocks is not None:
+            payload["risk_blocks"] = list(risk_blocks)
+        signal.explain_payload = payload
+
+    def _build_exit_explain_payload(
+        self,
+        *,
+        snapshot: MarketSnapshot,
+        snapshot_key: str,
+        exit_config: dict[str, object],
+        position: Position,
+        current_price: float,
+        reason: ExitReason,
+    ) -> dict[str, object]:
+        facts: list[dict[str, object]] = [
+            {"label": "current_price", "value": current_price},
+        ]
+        parameters: list[dict[str, object]] = []
+        if position.avg_entry_price is not None:
+            facts.append({"label": "avg_entry_price", "value": position.avg_entry_price})
+        if position.stop_loss_price is not None:
+            facts.append({"label": "stop_loss_price", "value": position.stop_loss_price})
+        if position.take_profit_price is not None:
+            facts.append({"label": "take_profit_price", "value": position.take_profit_price})
+        for key in ("stop_loss_pct", "take_profit_pct", "trailing_stop_pct", "time_stop_bars"):
+            if key in exit_config:
+                parameters.append({"label": f"exit.{key}", "value": exit_config.get(key)})
+        return {
+            "snapshot_key": snapshot_key,
+            "decision": SignalAction.EXIT.value,
+            "reason_codes": [reason.value],
+            "facts": facts + parameters,
+            "parameters": parameters,
+            "matched_conditions": [f"exit.{reason.value.lower()}"],
+            "failed_conditions": [],
+            "risk_blocks": [],
+        }
+
     def _resolve_candle(self, snapshot: MarketSnapshot, strategy_config: dict[str, object]) -> dict[str, float]:
         market = self._as_dict(strategy_config.get("market"))
         tf_raw = market.get("timeframes")
@@ -407,3 +559,40 @@ class ExecutionService:
 
     def _as_float(self, value: object, fallback: float) -> float:
         return float(value) if isinstance(value, int | float) else fallback
+
+    def _arm_reentry_guard(self, session: Session, strategy_config: dict[str, object], symbol: str) -> None:
+        reentry_cfg = self._as_dict(strategy_config.get("reentry"))
+        if not bool(reentry_cfg.get("allow", reentry_cfg.get("enabled", False))):
+            return
+        self.risk_guard.start_reentry_guard(
+            session.id,
+            symbol,
+            cooldown_bars=self._as_int(reentry_cfg.get("cooldown_bars"), 0),
+            require_reset=bool(reentry_cfg.get("require_reset", False)),
+        )
+
+    def _refresh_reentry_state(self, session: Session, strategy_config: dict[str, object], snapshot: MarketSnapshot) -> None:
+        reentry_cfg = self._as_dict(strategy_config.get("reentry"))
+        if not bool(reentry_cfg.get("allow", reentry_cfg.get("enabled", False))):
+            return
+
+        state = self.risk_guard.advance_reentry_guard(session.id, snapshot.symbol)
+        if state != ReentryState.WAIT_RESET:
+            return
+
+        reset_condition = self._as_dict(reentry_cfg.get("reset_condition"))
+        if not reset_condition:
+            return
+
+        timeframe = self.signal_generator.primary_timeframe(strategy_config)
+        evaluation = self.signal_generator.evaluate_block(
+            reset_condition,
+            snapshot,
+            path="reentry.reset_condition",
+            default_timeframe=timeframe,
+        )
+        if evaluation.matched:
+            self.risk_guard.clear_reentry_guard(session.id, snapshot.symbol)
+
+    def _as_int(self, value: object, fallback: int) -> int:
+        return int(value) if isinstance(value, int | float) else fallback

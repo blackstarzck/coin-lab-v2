@@ -5,6 +5,9 @@ export interface LiveSymbolPrice {
   symbol: string
   price: number | null
   timestamp: string | null
+  buy_entry_rate_pct: number | null
+  sell_entry_rate_pct: number | null
+  entry_rate_window_sec: number | null
 }
 
 interface PriceSnapshotMessage {
@@ -18,6 +21,9 @@ interface PriceUpdateMessage {
   symbol: string
   price: number
   timestamp: string
+  buy_entry_rate_pct: number | null
+  sell_entry_rate_pct: number | null
+  entry_rate_window_sec: number | null
   trace_id: string
 }
 
@@ -136,6 +142,9 @@ export function useActiveSymbolPrices(symbols: string[]) {
                 symbol: message.symbol,
                 price: message.price,
                 timestamp: message.timestamp,
+                buy_entry_rate_pct: message.buy_entry_rate_pct,
+                sell_entry_rate_pct: message.sell_entry_rate_pct,
+                entry_rate_window_sec: message.entry_rate_window_sec,
               },
             }))
           })

@@ -4,7 +4,7 @@ import asyncio
 from collections import defaultdict, deque
 from datetime import UTC, datetime, timedelta
 import threading
-from typing import Any
+from typing import Any, Iterable
 
 from ...domain.entities.market import MarketSnapshot
 from ...infrastructure.repositories.lab_store import LabStore
@@ -33,15 +33,32 @@ def _dispatch_queue(
         pass
 
 
+def _normalize_symbols(symbols: Iterable[str]) -> tuple[str, ...]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for symbol in symbols:
+        cleaned = str(symbol).strip()
+        if not cleaned or cleaned in seen:
+            continue
+        normalized.append(cleaned)
+        seen.add(cleaned)
+    return tuple(normalized)
+
+
 class StreamService:
     def __init__(self, store: LabStore) -> None:
         self.store = store
         self._monitoring_service = MonitoringService(store)
         self._lock = threading.RLock()
         self._chart_history: dict[tuple[str, str], deque[dict[str, object]]] = defaultdict(lambda: deque(maxlen=400))
+        self._latest_prices: dict[str, dict[str, object | None]] = {}
         self._monitoring_subscribers: dict[asyncio.Queue[dict[str, object]], asyncio.AbstractEventLoop] = {}
         self._chart_subscribers: dict[
             tuple[str, str],
+            dict[asyncio.Queue[dict[str, object]], asyncio.AbstractEventLoop],
+        ] = defaultdict(dict)
+        self._price_subscribers: dict[
+            str,
             dict[asyncio.Queue[dict[str, object]], asyncio.AbstractEventLoop],
         ] = defaultdict(dict)
         self.connection_state: str = "DISCONNECTED"
@@ -66,7 +83,47 @@ class StreamService:
             "points": history[-limit:],
         }
 
+    def price_snapshot(self, symbols: Iterable[str]) -> dict[str, object]:
+        requested_symbols = _normalize_symbols(symbols)
+        with self._lock:
+            items = [
+                {
+                    "symbol": symbol,
+                    "price": self._latest_prices.get(symbol, {}).get("price"),
+                    "timestamp": self._latest_prices.get(symbol, {}).get("timestamp"),
+                    "buy_entry_rate_pct": self._latest_prices.get(symbol, {}).get("buy_entry_rate_pct"),
+                    "sell_entry_rate_pct": self._latest_prices.get(symbol, {}).get("sell_entry_rate_pct"),
+                    "entry_rate_window_sec": self._latest_prices.get(symbol, {}).get("entry_rate_window_sec"),
+                }
+                for symbol in requested_symbols
+            ]
+        return {"symbols": items}
+
     def record_snapshot(self, snapshot: MarketSnapshot) -> None:
+        if snapshot.latest_price is not None:
+            price_timestamp = snapshot.snapshot_time.astimezone(UTC).isoformat().replace("+00:00", "Z")
+            with self._lock:
+                self._latest_prices[snapshot.symbol] = {
+                    "price": snapshot.latest_price,
+                    "timestamp": price_timestamp,
+                    "buy_entry_rate_pct": snapshot.buy_entry_rate_pct,
+                    "sell_entry_rate_pct": snapshot.sell_entry_rate_pct,
+                    "entry_rate_window_sec": snapshot.entry_rate_window_sec,
+                }
+                price_subscribers = list(self._price_subscribers.get(snapshot.symbol, {}).items())
+
+            price_payload = {
+                "type": "price_update",
+                "symbol": snapshot.symbol,
+                "price": snapshot.latest_price,
+                "timestamp": price_timestamp,
+                "buy_entry_rate_pct": snapshot.buy_entry_rate_pct,
+                "sell_entry_rate_pct": snapshot.sell_entry_rate_pct,
+                "entry_rate_window_sec": snapshot.entry_rate_window_sec,
+            }
+            for queue, loop in price_subscribers:
+                _dispatch_queue(loop, queue, price_payload)
+
         for timeframe, candle in snapshot.candles.items():
             point = {
                 "time": candle.candle_start.astimezone(UTC).isoformat().replace("+00:00", "Z"),
@@ -140,6 +197,33 @@ class StreamService:
             subscribers.pop(queue, None)
             if not subscribers:
                 self._chart_subscribers.pop(key, None)
+
+    def register_price_subscriber(
+        self,
+        symbols: Iterable[str],
+    ) -> tuple[tuple[str, ...], asyncio.Queue[dict[str, object]]]:
+        normalized_symbols = _normalize_symbols(symbols)
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[dict[str, object]] = asyncio.Queue(maxsize=max(10, len(normalized_symbols) * 4))
+        with self._lock:
+            for symbol in normalized_symbols:
+                self._price_subscribers[symbol][queue] = loop
+        return normalized_symbols, queue
+
+    def unregister_price_subscriber(
+        self,
+        symbols: Iterable[str],
+        queue: asyncio.Queue[dict[str, object]],
+    ) -> None:
+        normalized_symbols = _normalize_symbols(symbols)
+        with self._lock:
+            for symbol in normalized_symbols:
+                subscribers = self._price_subscribers.get(symbol)
+                if not subscribers:
+                    continue
+                subscribers.pop(queue, None)
+                if not subscribers:
+                    self._price_subscribers.pop(symbol, None)
 
     def backtest_stream_event(self, run_id: str) -> dict[str, object]:
         return {"run_id": run_id, "status": "COMPLETED", "progress": 100}

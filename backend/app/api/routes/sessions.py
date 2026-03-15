@@ -4,7 +4,7 @@ from fastapi import APIRouter, Query
 
 from .. import response_envelope
 from ...application.container import get_container
-from ...schemas.session import SessionCreate, SessionKillRequest, SessionStopRequest
+from ...schemas.session import SessionCreate, SessionKillRequest, SessionReevaluateRequest, SessionStopRequest
 
 router = APIRouter(prefix="/sessions")
 
@@ -46,6 +46,14 @@ def stop_session(session_id: str, payload: SessionStopRequest) -> dict[str, obje
 @router.post("/{session_id}/kill")
 def kill_session(session_id: str, payload: SessionKillRequest) -> dict[str, object]:
     result = get_container().session_service.kill_session(session_id, payload.reason, payload.close_open_positions)
+    return response_envelope(result)
+
+
+@router.post("/{session_id}/reevaluate")
+def reevaluate_session(session_id: str, payload: SessionReevaluateRequest) -> dict[str, object]:
+    container = get_container()
+    session = container.session_service.get_session(session_id)
+    result = container.runtime_service.manual_reevaluate_session(session, payload.symbols)
     return response_envelope(result)
 
 

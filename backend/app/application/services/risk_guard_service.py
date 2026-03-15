@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
@@ -20,12 +21,19 @@ from ...domain.entities.session import (
 logger = get_logger(__name__)
 
 
+@dataclass(slots=True)
+class _ReentryTracker:
+    state: ReentryState = ReentryState.ELIGIBLE
+    cooldown_remaining: int = 0
+    require_reset: bool = False
+
+
 class RiskGuardService:
     def __init__(self) -> None:
         self._risk_states: dict[str, RiskState] = {}
         self._daily_loss: dict[str, float] = {}
         self._open_positions: dict[str, dict[str, PositionState]] = {}
-        self._reentry_states: dict[str, dict[str, ReentryState]] = {}
+        self._reentry_states: dict[str, dict[str, _ReentryTracker]] = {}
         self._signal_dedupe: dict[str, datetime] = {}
 
     def check_all(self, session: Session, strategy_config: dict[str, object], signal_action: str, symbol: str) -> RiskCheckResult:
@@ -87,9 +95,14 @@ class RiskGuardService:
             return self._block(session.id, error_codes.RISK_EMERGENCY_STOP_ACTIVE, risk_state=RiskState.KILL_SWITCHED)
 
         # 8) symbol_cooldown_reentry
-        if signal_action == SignalAction.ENTER.value and bool(reentry_cfg.get("enabled", False)):
-            reentry_state = self._reentry_states.get(session.id, {}).get(symbol, ReentryState.ELIGIBLE)
-            if reentry_state in {ReentryState.COOLDOWN, ReentryState.WAIT_RESET, ReentryState.DISABLED}:
+        reentry_enabled = bool(reentry_cfg.get("allow", reentry_cfg.get("enabled", False)))
+        if signal_action == SignalAction.ENTER.value and reentry_enabled:
+            reentry_state = self.get_reentry_state(session.id, symbol)
+            if reentry_state == ReentryState.COOLDOWN:
+                return self._block(session.id, error_codes.RISK_REENTRY_COOLDOWN_ACTIVE)
+            if reentry_state == ReentryState.WAIT_RESET:
+                return self._block(session.id, error_codes.RISK_REENTRY_RESET_PENDING)
+            if reentry_state == ReentryState.DISABLED:
                 return self._block(session.id, error_codes.EXEC_POSITION_STATE_INVALID)
 
         if signal_action == SignalAction.ENTER.value:
@@ -113,7 +126,40 @@ class RiskGuardService:
         }
 
     def set_reentry_state(self, session_id: str, symbol: str, state: ReentryState) -> None:
-        self._reentry_states.setdefault(session_id, {})[symbol] = state
+        tracker = self._tracker(session_id, symbol)
+        tracker.state = state
+        if state != ReentryState.COOLDOWN:
+            tracker.cooldown_remaining = 0
+        if state == ReentryState.ELIGIBLE:
+            tracker.require_reset = False
+
+    def start_reentry_guard(self, session_id: str, symbol: str, cooldown_bars: int, require_reset: bool) -> None:
+        tracker = self._tracker(session_id, symbol)
+        tracker.require_reset = require_reset
+        tracker.cooldown_remaining = max(cooldown_bars, 0)
+        if tracker.cooldown_remaining > 0:
+            tracker.state = ReentryState.COOLDOWN
+            return
+        tracker.state = ReentryState.WAIT_RESET if require_reset else ReentryState.ELIGIBLE
+
+    def advance_reentry_guard(self, session_id: str, symbol: str) -> ReentryState:
+        tracker = self._tracker(session_id, symbol)
+        if tracker.state != ReentryState.COOLDOWN:
+            return tracker.state
+        tracker.cooldown_remaining = max(tracker.cooldown_remaining - 1, 0)
+        if tracker.cooldown_remaining > 0:
+            return tracker.state
+        tracker.state = ReentryState.WAIT_RESET if tracker.require_reset else ReentryState.ELIGIBLE
+        return tracker.state
+
+    def clear_reentry_guard(self, session_id: str, symbol: str) -> None:
+        tracker = self._tracker(session_id, symbol)
+        tracker.state = ReentryState.ELIGIBLE
+        tracker.cooldown_remaining = 0
+        tracker.require_reset = False
+
+    def get_reentry_state(self, session_id: str, symbol: str) -> ReentryState:
+        return self._tracker(session_id, symbol).state
 
     def activate_kill_switch(self, session_id: str) -> None:
         self._risk_states[session_id] = RiskState.KILL_SWITCHED
@@ -171,3 +217,6 @@ class RiskGuardService:
 
     def _as_float(self, value: object, fallback: float) -> float:
         return float(value) if isinstance(value, int | float) else fallback
+
+    def _tracker(self, session_id: str, symbol: str) -> _ReentryTracker:
+        return self._reentry_states.setdefault(session_id, {}).setdefault(symbol, _ReentryTracker())

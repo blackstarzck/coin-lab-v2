@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import cast
 
 import pytest
@@ -19,6 +19,7 @@ from app.domain.entities.session import (
     PositionState,
     Session,
     SessionStatus,
+    Signal,
     SignalAction,
 )
 
@@ -57,6 +58,29 @@ def _base_strategy_config() -> dict[str, object]:
     }
 
 
+def test_position_size_defaults_to_ten_percent_of_initial_capital() -> None:
+    execution, _, _, _ = _services()
+    qty = execution._calculate_position_size(  # noqa: SLF001 - sizing behavior is the unit under test
+        {"backtest": {"initial_capital": 1_000_000}},
+        _snapshot(latest=100.0, open_price=100.0, high=101.0, low=99.0, close=100.0),
+    )
+
+    assert qty == pytest.approx(1_000.0)
+
+
+def test_fixed_amount_position_size_uses_krw_notional() -> None:
+    execution, _, _, _ = _services()
+    qty = execution._calculate_position_size(  # noqa: SLF001 - sizing behavior is the unit under test
+        {
+            "position": {"size_mode": "fixed_amount", "size_value": 250_000},
+            "backtest": {"initial_capital": 1_000_000},
+        },
+        _snapshot(latest=100.0, open_price=100.0, high=101.0, low=99.0, close=100.0),
+    )
+
+    assert qty == pytest.approx(2_500.0)
+
+
 def _session() -> Session:
     now = datetime.now(UTC)
     return Session(
@@ -77,8 +101,16 @@ def _session() -> Session:
     )
 
 
-def _snapshot(*, latest: float, open_price: float, high: float, low: float, close: float) -> MarketSnapshot:
-    now = datetime.now(UTC)
+def _snapshot(
+    *,
+    latest: float,
+    open_price: float,
+    high: float,
+    low: float,
+    close: float,
+    snapshot_time: datetime | None = None,
+) -> MarketSnapshot:
+    now = snapshot_time or datetime.now(UTC)
     candle = CandleState(
         symbol="KRW-BTC",
         timeframe="1m",
@@ -97,6 +129,45 @@ def _snapshot(*, latest: float, open_price: float, high: float, low: float, clos
         candles={"1m": candle},
         volume_24h=1000.0,
         snapshot_time=now,
+        is_stale=False,
+        connection_state=ConnectionState.CONNECTED,
+    )
+
+
+def _snapshot_with_history(
+    closes: list[float],
+    *,
+    timeframe: str = "5m",
+    snapshot_time: datetime | None = None,
+) -> MarketSnapshot:
+    now = snapshot_time or datetime.now(UTC)
+    candles: list[CandleState] = []
+    for index, close in enumerate(closes):
+        candle_time = now - timedelta(minutes=(len(closes) - 1 - index) * 5)
+        candles.append(
+            CandleState(
+                symbol="KRW-BTC",
+                timeframe=timeframe,
+                open=close - 0.5,
+                high=close + 1.0,
+                low=close - 1.0,
+                close=close,
+                volume=100.0 + index,
+                candle_start=candle_time,
+                is_closed=True,
+                last_update=candle_time,
+            )
+        )
+
+    current = candles[-1]
+    history = tuple(candles[:-1])
+    return MarketSnapshot(
+        symbol="KRW-BTC",
+        latest_price=current.close,
+        candles={timeframe: current},
+        volume_24h=1000.0,
+        snapshot_time=current.candle_start,
+        candle_history={timeframe: history},
         is_stale=False,
         connection_state=ConnectionState.CONNECTED,
     )
@@ -256,6 +327,80 @@ def test_duplicate_signal_rejected() -> None:
     assert second is not None
     assert second.blocked is True
     assert error_codes.EXEC_DUPLICATE_SIGNAL_IGNORED in second.reason_codes
+    assert second.explain_payload is not None
+    assert second.explain_payload["decision"] == "SIGNAL_DEDUPED"
+    assert second.explain_payload["snapshot_key"] == f"KRW-BTC|1m|{second.snapshot_time.isoformat()}"
+    assert second.explain_payload["matched_conditions"] == ["entry.conditions[0]"]
+
+
+def test_signal_explain_includes_runtime_parameters() -> None:
+    _, _, _, signal_generator = _services()
+    config = _base_strategy_config()
+    config["entry"] = {
+        "logic": "all",
+        "conditions": [
+            {
+                "type": "threshold_compare",
+                "left": {"kind": "price", "field": "close"},
+                "operator": ">",
+                "right": {"kind": "constant", "value": 100.0},
+            }
+        ],
+    }
+
+    signal = signal_generator.evaluate(
+        config,
+        _snapshot(latest=110.0, open_price=100.0, high=111.0, low=99.0, close=110.0),
+        "ses_test_001",
+        "stv_test_001",
+    )
+
+    assert signal is not None
+    assert signal.explain_payload is not None
+    assert {"label": "entry.conditions[0].right.value", "value": 100.0} in signal.explain_payload["parameters"]
+    assert {"label": "entry.conditions[0].right.value", "value": 100.0} in signal.explain_payload["facts"]
+
+
+def test_signal_explain_includes_ema_and_breakout_facts_for_dsl_entry() -> None:
+    _, _, _, signal_generator = _services()
+    config = _base_strategy_config()
+    config["market"] = {"timeframes": ["5m"]}
+    config["entry"] = {
+        "logic": "all",
+        "conditions": [
+            {
+                "type": "indicator_compare",
+                "left": {"kind": "indicator", "name": "ema", "params": {"length": 20}},
+                "operator": ">",
+                "right": {"kind": "indicator", "name": "ema", "params": {"length": 50}},
+            },
+            {
+                "type": "price_breakout",
+                "source": {"kind": "price", "field": "close"},
+                "operator": ">",
+                "reference": {"kind": "derived", "name": "highest_high", "params": {"lookback": 20, "exclude_current": True}},
+            },
+        ],
+    }
+
+    closes = [100.0 + (index * 0.8) for index in range(59)] + [160.0]
+    signal = signal_generator.evaluate(
+        config,
+        _snapshot_with_history(closes),
+        "ses_test_001",
+        "stv_test_001",
+    )
+
+    assert signal is not None
+    assert signal.explain_payload is not None
+    facts = signal.explain_payload["facts"]
+    parameters = signal.explain_payload["parameters"]
+
+    assert any(item["label"] == "ema20" and isinstance(item["value"], float) for item in facts)
+    assert any(item["label"] == "ema50" and isinstance(item["value"], float) for item in facts)
+    assert any(item["label"] == "highest_high20" and isinstance(item["value"], float) for item in facts)
+    assert {"label": "entry.conditions[0].left.params.length", "value": 20} in parameters
+    assert {"label": "entry.conditions[1].reference.params.lookback", "value": 20} in parameters
 
 
 def test_risk_guard_max_positions_blocked() -> None:
@@ -278,12 +423,88 @@ def test_existing_open_position_blocks_duplicate_entry_after_runtime_sync() -> N
     result = execution.process_snapshot(
         _session(),
         _base_strategy_config(),
-        _snapshot(latest=110.0, open_price=100.0, high=112.0, low=99.0, close=111.0),
+        _snapshot(latest=104.0, open_price=100.0, high=104.0, low=99.0, close=104.0),
     )
 
     assert result["accepted"] is False
     assert result["reason_codes"] == [error_codes.RISK_DUPLICATE_POSITION_BLOCKED]
     assert "order" not in result
+    signal = result["signal"]
+    assert isinstance(signal, Signal)
+    assert signal.explain_payload is not None
+    assert signal.explain_payload["decision"] == "EXECUTION_REJECTED"
+    assert signal.explain_payload["reason_codes"] == [error_codes.RISK_DUPLICATE_POSITION_BLOCKED]
+
+
+def test_reentry_cooldown_and_reset_condition_are_enforced() -> None:
+    execution, _, _, _ = _services()
+    config = _base_strategy_config()
+    config["reentry"] = {
+        "allow": True,
+        "cooldown_bars": 2,
+        "require_reset": True,
+        "reset_condition": {
+            "type": "threshold_compare",
+            "left": {"kind": "price", "field": "close"},
+            "operator": "<",
+            "right": {"kind": "constant", "value": 105.0},
+        },
+    }
+    execution.sync_positions([_position(stop=95.0, tp=102.0)])
+    base_time = datetime.now(UTC)
+
+    exit_result = execution.process_snapshot(
+        _session(),
+        config,
+        _snapshot(latest=103.0, open_price=100.0, high=103.0, low=99.0, close=103.0, snapshot_time=base_time),
+    )
+    assert exit_result["accepted"] is True
+    assert exit_result["exits"]
+
+    cooldown_result = execution.process_snapshot(
+        _session(),
+        config,
+        _snapshot(
+            latest=110.0,
+            open_price=106.0,
+            high=111.0,
+            low=105.0,
+            close=110.0,
+            snapshot_time=base_time + timedelta(seconds=1),
+        ),
+    )
+    assert cooldown_result["accepted"] is False
+    assert cooldown_result["reason_codes"] == [error_codes.RISK_REENTRY_COOLDOWN_ACTIVE]
+
+    reset_pending_result = execution.process_snapshot(
+        _session(),
+        config,
+        _snapshot(
+            latest=109.0,
+            open_price=106.0,
+            high=110.0,
+            low=105.0,
+            close=109.0,
+            snapshot_time=base_time + timedelta(seconds=2),
+        ),
+    )
+    assert reset_pending_result["accepted"] is False
+    assert reset_pending_result["reason_codes"] == [error_codes.RISK_REENTRY_RESET_PENDING]
+
+    reentry_result = execution.process_snapshot(
+        _session(),
+        config,
+        _snapshot(
+            latest=100.0,
+            open_price=100.0,
+            high=101.0,
+            low=99.0,
+            close=100.0,
+            snapshot_time=base_time + timedelta(seconds=3),
+        ),
+    )
+    assert reentry_result["accepted"] is True
+    assert isinstance(reentry_result["signal"], Signal)
 
 
 def test_risk_guard_daily_loss_blocked() -> None:

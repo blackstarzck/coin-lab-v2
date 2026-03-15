@@ -1,22 +1,20 @@
-import { Box, Button, Divider, Popover, Stack, Typography } from '@mui/material'
-import { Info } from 'lucide-react'
+import { Box, Divider, Popover, Stack, Typography } from '@mui/material'
+import { ChevronDown } from 'lucide-react'
 import { useState, type MouseEvent } from 'react'
 
-interface EventLogHelpPopoverProps {
-  active?: boolean
-}
-
-interface GuideItem {
+export interface GuideItem {
   label: string
   description: string
 }
 
-interface GuideSection {
+export interface GuideSection {
   title: string
   items: GuideItem[]
 }
 
-const GUIDE_SECTIONS: GuideSection[] = [
+const GUIDE_OVERLAY_BG = 'rgba(7, 10, 18, 0.86)'
+
+export const EVENT_LOG_GUIDE_SECTIONS: GuideSection[] = [
   {
     title: '어떻게 읽나',
     items: [
@@ -103,7 +101,17 @@ const GUIDE_SECTIONS: GuideSection[] = [
   },
 ]
 
-export function EventLogHelpPopover({ active = false }: EventLogHelpPopoverProps) {
+interface DetailGuidePopoverProps {
+  summary: string
+  sections: GuideSection[]
+  footnote?: string
+}
+
+export function DetailGuidePopover({
+  summary,
+  sections,
+  footnote,
+}: DetailGuidePopoverProps) {
   const [anchorEl, setAnchorEl] = useState<HTMLButtonElement | null>(null)
 
   const handleOpen = (event: MouseEvent<HTMLButtonElement>) => {
@@ -117,30 +125,55 @@ export function EventLogHelpPopover({ active = false }: EventLogHelpPopoverProps
   const open = Boolean(anchorEl)
 
   return (
-    <>
-      <Button
-        size="small"
-        variant="text"
+    <Box
+      sx={{
+        px: 2,
+        py: 1.25,
+        borderBottom: '1px solid',
+        borderColor: 'divider',
+        bgcolor: 'rgba(15, 23, 42, 0.34)',
+      }}
+    >
+      <Box
+        component="button"
+        type="button"
         onClick={handleOpen}
         sx={{
-          minWidth: 0,
-          px: 0,
-          py: 0,
-          fontSize: 12,
-          fontWeight: 500,
-          color: active ? '#d0b06f' : '#8b96aa',
-          textTransform: 'none',
-          alignSelf: 'flex-start',
-          gap: 0.75,
-          '&:hover': {
-            backgroundColor: 'transparent',
-            color: active ? '#dfbe7a' : '#a2aec4',
-          },
+          display: 'flex',
+          width: '100%',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 1.5,
+          border: 0,
+          p: 0,
+          bgcolor: 'transparent',
+          color: 'inherit',
+          textAlign: 'left',
+          cursor: 'pointer',
         }}
       >
-        <Info size={14} strokeWidth={2.1} />
-        로그 설명
-      </Button>
+        <Typography
+          variant="caption"
+          sx={{
+            color: 'rgba(222, 230, 242, 0.72)',
+            lineHeight: 1.55,
+          }}
+        >
+          {summary}
+        </Typography>
+        <Box
+          sx={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+            color: '#8b96aa',
+          }}
+        >
+          <ChevronDown size={16} strokeWidth={2} />
+        </Box>
+      </Box>
+
       <Popover
         open={open}
         anchorEl={anchorEl}
@@ -150,13 +183,14 @@ export function EventLogHelpPopover({ active = false }: EventLogHelpPopoverProps
         PaperProps={{
           sx: {
             mt: 1,
-            width: 380,
-            maxWidth: 'calc(100vw - 32px)',
+            width: 'max-content',
+            minWidth: 420,
+            maxWidth: 'min(680px, calc(100vw - 32px))',
             maxHeight: 520,
             overflowY: 'auto',
             p: 2,
             color: '#e7edf7',
-            bgcolor: 'rgba(7, 10, 18, 0.86)',
+            bgcolor: GUIDE_OVERLAY_BG,
             backgroundImage: 'none',
             backdropFilter: 'blur(18px)',
             border: '1px solid rgba(255, 255, 255, 0.08)',
@@ -165,16 +199,11 @@ export function EventLogHelpPopover({ active = false }: EventLogHelpPopoverProps
         }}
       >
         <Stack spacing={1.5}>
-          <Box>
-            <Typography variant="subtitle2" fontWeight={600} sx={{ color: '#f4f7fb' }}>
-              이벤트 로그 설명
-            </Typography>
-            <Typography variant="caption" sx={{ color: 'rgba(222, 230, 242, 0.72)' }}>
-              채널, 레벨, 이벤트 코드를 함께 보면 로그 의미를 빠르게 파악할 수 있습니다.
-            </Typography>
-          </Box>
+          <Typography variant="caption" sx={{ color: 'rgba(222, 230, 242, 0.72)', lineHeight: 1.55 }}>
+            {summary}
+          </Typography>
 
-          {GUIDE_SECTIONS.map((section, index) => (
+          {sections.map((section, index) => (
             <Stack key={section.title} spacing={1}>
               {index > 0 ? <Divider flexItem sx={{ borderColor: 'rgba(255, 255, 255, 0.08)' }} /> : null}
               <Typography variant="caption" sx={{ color: 'rgba(208, 219, 235, 0.62)', letterSpacing: '0.02em' }}>
@@ -185,44 +214,54 @@ export function EventLogHelpPopover({ active = false }: EventLogHelpPopoverProps
                   <Box
                     key={`${section.title}-${item.label}`}
                     sx={{
-                      display: 'grid',
-                      gridTemplateColumns: 'minmax(0, 128px) minmax(0, 1fr)',
-                      gap: 1.25,
-                      alignItems: 'start',
+                      display: 'flex',
+                      gap: 1.5,
+                      alignItems: 'flex-start',
+                      maxWidth: '100%',
                     }}
                   >
-                    <Typography
-                      variant="caption"
+                    <Box
                       sx={{
-                        color: '#f2f5fa',
-                        lineHeight: 1.55,
-                        overflowWrap: 'anywhere',
-                        wordBreak: 'break-word',
-                        ...(section.title === '대표 event_type'
-                          ? {
-                              fontFamily: 'Consolas, "SFMono-Regular", Menlo, monospace',
-                              fontSize: 11,
-                              letterSpacing: '-0.01em',
-                            }
-                          : null),
+                        minWidth: section.title.includes('event_type') ? 176 : 112,
+                        flexShrink: 0,
                       }}
                     >
-                      {item.label}
-                    </Typography>
-                    <Typography variant="caption" sx={{ color: 'rgba(222, 230, 242, 0.72)', lineHeight: 1.55 }}>
-                      {item.description}
-                    </Typography>
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          color: '#f2f5fa',
+                          lineHeight: 1.55,
+                          overflowWrap: 'anywhere',
+                          wordBreak: 'break-word',
+                          ...(section.title.includes('event_type')
+                            ? {
+                                fontFamily: 'Consolas, "SFMono-Regular", Menlo, monospace',
+                                letterSpacing: '-0.01em',
+                              }
+                            : null),
+                        }}
+                      >
+                        {item.label}
+                      </Typography>
+                    </Box>
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Typography variant="caption" sx={{ color: 'rgba(222, 230, 242, 0.72)', lineHeight: 1.55 }}>
+                        {item.description}
+                      </Typography>
+                    </Box>
                   </Box>
                 ))}
               </Stack>
             </Stack>
           ))}
 
-          <Typography variant="caption" sx={{ color: 'rgba(222, 230, 242, 0.66)', lineHeight: 1.55 }}>
-            로그 코드는 버전에 따라 조금 달라질 수 있습니다. 해석할 때는 채널과 메시지도 함께 보세요.
-          </Typography>
+          {footnote ? (
+            <Typography variant="caption" sx={{ color: 'rgba(222, 230, 242, 0.66)', lineHeight: 1.55 }}>
+              {footnote}
+            </Typography>
+          ) : null}
         </Stack>
       </Popover>
-    </>
+    </Box>
   )
 }

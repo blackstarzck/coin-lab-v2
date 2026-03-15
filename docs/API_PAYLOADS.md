@@ -218,7 +218,40 @@
 
 ---
 
-## 20. Backtest list
+## 20. Session manual reevaluate
+
+### POST `/api/v1/sessions/{sessionId}/reevaluate`
+
+#### Request
+```json
+{
+  "symbols": ["KRW-BTC"]
+}
+```
+
+#### Response
+```json
+{
+  "success": true,
+  "trace_id": "trc_017b",
+  "data": {
+    "accepted": true,
+    "session_id": "ses_001",
+    "requested_symbols": ["KRW-BTC"],
+    "evaluated_symbols": ["KRW-BTC"],
+    "skipped": []
+  }
+}
+```
+
+#### Note
+- `symbols`를 비우면 현재 세션의 `active_symbols` 전체를 수동 재평가한다.
+- 수동 재평가의 실행 로그는 `strategy-execution` 채널에 `trigger=ON_MANUAL_REEVALUATE`로 기록된다.
+- stale snapshot 또는 degraded 상태면 `EVALUATION_SKIPPED`가 남고 실제 실행은 차단된다.
+
+---
+
+## 21. Backtest list
 
 ### GET `/api/v1/backtests?page=1&page_size=20`
 
@@ -253,7 +286,7 @@
 
 ---
 
-## 21. Backtest performance
+## 22. Backtest performance
 
 ### GET `/api/v1/backtests/{runId}/performance`
 
@@ -827,11 +860,39 @@
       "confidence": 0.78,
       "reason_codes": ["EMA_BULLISH", "HH20_BREAKOUT"],
       "snapshot_time": "2026-03-10T03:05:00Z",
-      "blocked": false
+      "blocked": false,
+      "explain_payload": {
+        "snapshot_key": "KRW-BTC|5m|2026-03-10T03:05:00Z",
+        "decision": "ENTER",
+        "reason_codes": ["INDICATOR_COMPARE_MATCH", "PRICE_BREAKOUT_20"],
+        "facts": [
+          { "label": "ema20", "value": 143210125.51 },
+          { "label": "ema50", "value": 142804991.18 },
+          { "label": "close", "value": 143500000 },
+          { "label": "highest_high20", "value": 143000000 },
+          { "label": "entry.conditions[0].left.params.length", "value": 20 },
+          { "label": "entry.conditions[0].right.params.length", "value": 50 },
+          { "label": "entry.conditions[1].reference.params.lookback", "value": 20 },
+          { "label": "entry.conditions[1].reference.params.exclude_current", "value": true }
+        ],
+        "parameters": [
+          { "label": "entry.conditions[0].left.params.length", "value": 20 },
+          { "label": "entry.conditions[0].right.params.length", "value": 50 },
+          { "label": "entry.conditions[1].reference.params.lookback", "value": 20 },
+          { "label": "entry.conditions[1].reference.params.exclude_current", "value": true }
+        ],
+        "matched_conditions": ["entry.conditions[0]", "entry.conditions[1]"],
+        "failed_conditions": [],
+        "risk_blocks": []
+      }
     }
   ]
 }
 ```
+
+메모:
+- `parameters`는 전략 파라미터 메타데이터를 별도로 제공한다.
+- `facts`에는 계산값과 함께 UI 노출용 parameter 항목이 함께 포함될 수 있다.
 
 ---
 
@@ -917,17 +978,32 @@
       "session_id": "ses_001",
       "strategy_version_id": "stv_003",
       "symbol": "KRW-BTC",
-      "event_type": "SIGNAL_EMITTED",
-      "message": "Entry signal emitted",
+      "event_type": "EVALUATION_COMPLETED",
+      "message": "Strategy evaluation completed",
       "payload": {
-        "snapshot_key": "KRW-BTC|5m|2026-03-10T03:05:00Z",
-        "reason_codes": ["EMA_BULLISH", "HH20_BREAKOUT"]
+        "trigger": "ON_CANDLE_CLOSE",
+        "snapshot_time": "2026-03-10T03:05:00Z",
+        "source_event_type": "CANDLE_CLOSE",
+        "source_trace_ids": ["trc_src_001", "trc_src_002"],
+        "closed_timeframes": ["5m"],
+        "updated_timeframes": ["1m", "5m", "15m"],
+        "decision": "SIGNAL_EMITTED",
+        "accepted": true,
+        "signal_state": "ACCEPTED",
+        "reason_codes": ["EMA_BULLISH", "HH20_BREAKOUT"],
+        "blocked_codes": []
       },
       "logged_at": "2026-03-10T03:05:00Z"
     }
   ]
 }
 ```
+
+Typical `strategy-execution` events:
+- `EVALUATION_STARTED`
+- `EVALUATION_SKIPPED`
+- `SIGNAL_EMITTED`
+- `EVALUATION_COMPLETED`
 
 ### Additional log channels
 - `GET /api/v1/logs/system`
@@ -1071,7 +1147,57 @@ All log channels reuse the same log-entry envelope and only differ by `channel`.
 
 ---
 
-## 27. First-run and session-start semantics
+## 28. Price websocket snapshot
+
+### WS `/ws/prices?symbols=KRW-BTC,KRW-ETH`
+
+#### Snapshot message
+```json
+{
+  "type": "price_snapshot",
+  "trace_id": "trc_026",
+  "symbols": [
+    {
+      "symbol": "KRW-BTC",
+      "price": 143520000,
+      "timestamp": "2026-03-11T16:30:00.000Z"
+    },
+    {
+      "symbol": "KRW-ETH",
+      "price": 4230000,
+      "timestamp": "2026-03-11T16:30:00.000Z"
+    }
+  ]
+}
+```
+
+#### Incremental update
+```json
+{
+  "type": "price_update",
+  "trace_id": "trc_026",
+  "symbol": "KRW-BTC",
+  "price": 143540000,
+  "timestamp": "2026-03-11T16:30:01.000Z"
+}
+```
+
+#### Heartbeat
+```json
+{
+  "type": "heartbeat",
+  "trace_id": "trc_026",
+  "timestamp": "2026-03-11T16:30:05.000Z"
+}
+```
+
+#### Note
+- The client should subscribe only to the active-symbol set for the selected monitoring session.
+- Monitoring PnL rows can be derived client-side by combining this live price stream with `GET /api/v1/sessions/{sessionId}/positions`.
+
+---
+
+## 29. First-run and session-start semantics
 
 ### Fresh boot
 - fresh boot does not auto-start PAPER or LIVE sessions

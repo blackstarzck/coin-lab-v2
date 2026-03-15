@@ -120,6 +120,7 @@ def _row_to_signal(row: dict[str, Any]) -> Signal:
         reason_codes=_ensure_list(row.get("reason_codes", [])),
         snapshot_time=row["snapshot_time"],
         blocked=row.get("blocked", False),
+        explain_payload=row.get("explain_json"),
     )
 
 
@@ -547,7 +548,7 @@ class PostgresLabStore(LabStore):
                         signal.id, signal.session_id, signal.strategy_version_id,
                         signal.symbol, signal.timeframe, signal.action,
                         signal.confidence, self._json(signal.reason_codes),
-                        None, signal.blocked, signal.signal_price,
+                        self._json(signal.explain_payload), signal.blocked, signal.signal_price,
                         signal.snapshot_time, dedupe_key, datetime.now(UTC),
                     ),
                 )

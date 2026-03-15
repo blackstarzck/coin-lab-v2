@@ -67,7 +67,7 @@ export default function StrategiesPage() {
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h4">전략</Typography>
-        <Button variant="contained" color="primary">전략 생성</Button>
+        <Button variant="contained" color="primary" onClick={() => navigate('/strategies/new')}>전략 생성</Button>
       </Box>
 
       <Card sx={{ mb: 3 }}>
@@ -131,7 +131,7 @@ export default function StrategiesPage() {
               <TableRow>
                 <TableCell colSpan={8} align="center" sx={{ py: 8 }}>
                   <Typography color="text.secondary" mb={2}>전략이 없습니다. 첫 전략을 만들어 시작하세요.</Typography>
-                  <Button variant="outlined" color="primary">전략 생성</Button>
+                  <Button variant="outlined" color="primary" onClick={() => navigate('/strategies/new')}>전략 생성</Button>
                 </TableCell>
               </TableRow>
             ) : (

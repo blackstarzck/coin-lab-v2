@@ -86,9 +86,12 @@ class ValidateStrategyVersionResponse(ValidateResponse):
     pass
 
 
+ExplainValue = float | int | bool | str | None
+
+
 class ExplainFact(BaseModel):
     label: str
-    value: float
+    value: ExplainValue
 
 
 class ExplainPayload(BaseModel):
@@ -96,6 +99,9 @@ class ExplainPayload(BaseModel):
     decision: str
     reason_codes: list[str] = Field(default_factory=list)
     facts: list[ExplainFact] = Field(default_factory=list)
+    parameters: list[ExplainFact] = Field(default_factory=list)
     matched_conditions: list[str] = Field(default_factory=list)
     failed_conditions: list[str] = Field(default_factory=list)
     risk_blocks: list[str] = Field(default_factory=list)
+    legacy_payload: bool = False
+    legacy_note: str | None = None

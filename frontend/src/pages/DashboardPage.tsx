@@ -22,6 +22,7 @@ import { useMonitoringSummary } from '@/features/monitoring/api'
 import { useMonitoringSummaryStream } from '@/features/monitoring/useMonitoringSummaryStream'
 import { formatRelativeTime, formatTime, translateSeverity, translateSignalAction, translateStrategyType } from '@/shared/lib/i18n'
 import { AnimatedOdometer } from '@/shared/ui/AnimatedOdometer'
+import { StatusText } from '@/shared/ui/StatusText'
 import { useAnimatedTableRows } from '@/shared/ui/useAnimatedTableRows'
 
 export default function DashboardPage() {
@@ -66,7 +67,7 @@ export default function DashboardPage() {
     }
   }
 
-  const getActionColor = (action: string) => (action === 'ENTER' ? 'success' : 'error')
+  const getActionTone = (action: string) => (action === 'ENTER' ? 'success' : 'danger')
 
   if (isLoading && summary === undefined) {
     return (
@@ -406,7 +407,7 @@ export default function DashboardPage() {
                       </TableRow>
                     ) : (
                       recentSignals.map((signal) => {
-                        const actionColor = getActionColor(signal.action)
+                        const actionTone = getActionTone(signal.action)
                         return (
                           <TableRow
                             key={signal.id}
@@ -428,25 +429,14 @@ export default function DashboardPage() {
                               </Typography>
                             </TableCell>
                             <TableCell>
-                              <Stack direction="row" spacing={1} alignItems="center">
-                                <Chip
-                                  label={translateSignalAction(signal.action)}
-                                  size="small"
-                                  sx={{
-                                    fontSize: 10,
-                                    height: 20,
-                                    bgcolor: `status.${actionColor}`,
-                                    color: 'white',
-                                  }}
-                                />
+                              <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap">
+                                <StatusText tone={actionTone} variant="body2">
+                                  {translateSignalAction(signal.action)}
+                                </StatusText>
                                 {signal.blocked ? (
-                                  <Chip
-                                    label="차단"
-                                    size="small"
-                                    color="warning"
-                                    variant="outlined"
-                                    sx={{ fontSize: 10, height: 20 }}
-                                  />
+                                  <StatusText tone="warning">
+                                    차단
+                                  </StatusText>
                                 ) : null}
                               </Stack>
                             </TableCell>

@@ -80,6 +80,13 @@ class StrategyValidator:
 
         _ = self._validate_enum(market.get("exchange"), ("UPBIT",), "$.market.exchange", errors)
         _ = self._validate_enum(market.get("trade_basis"), ("candle", "tick", "hybrid"), "$.market.trade_basis", errors)
+        if "trigger" in market:
+            _ = self._validate_enum(
+                market.get("trigger"),
+                ("ON_TICK_BATCH", "ON_CANDLE_CLOSE", "ON_CANDLE_UPDATE", "ON_MANUAL_REEVALUATE"),
+                "$.market.trigger",
+                errors,
+            )
         timeframes = self._ensure_list(market.get("timeframes"))
         if self._has_duplicates(timeframes):
             self._add_issue(
@@ -216,6 +223,8 @@ class StrategyValidator:
         if strategy_type != "plugin":
             self._validate_condition_block(entry, "$.entry", 1, timeframe_set, errors)
         if reentry:
+            if "cooldown_bars" in reentry:
+                self._validate_non_negative_int(reentry.get("cooldown_bars"), "$.reentry.cooldown_bars", errors)
             reset_condition = self._as_dict(reentry.get("reset_condition"))
             if reset_condition:
                 self._validate_condition_block(reset_condition, "$.reentry.reset_condition", 1, timeframe_set, errors)
@@ -443,6 +452,10 @@ class StrategyValidator:
     def _validate_positive_int(self, value: object, path: str, errors: list[dict[str, str]]) -> None:
         if not isinstance(value, int) or value <= 0:
             self._add_issue(errors, error_codes.DSL_INVALID_THRESHOLD_RANGE, "값은 양의 정수여야 합니다.", path)
+
+    def _validate_non_negative_int(self, value: object, path: str, errors: list[dict[str, str]]) -> None:
+        if not isinstance(value, int) or value < 0:
+            self._add_issue(errors, error_codes.DSL_INVALID_THRESHOLD_RANGE, "값은 0 이상의 정수여야 합니다.", path)
 
     def _validate_unit_range(self, value: object, path: str, errors: list[dict[str, str]]) -> None:
         if not self._is_number(value):

@@ -16,11 +16,13 @@ import {
   Tabs,
   Tab,
   Tooltip,
-  Divider
+  FormControl,
+  MenuItem,
+  Select
 } from '@mui/material'
+import type { SelectChangeEvent } from '@mui/material/Select'
 import { useQuery } from '@tanstack/react-query'
-import { Activity, AlertTriangle, StopCircle, RefreshCw } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { Activity, AlertTriangle, Info, StopCircle, RefreshCw } from 'lucide-react'
 import {
   useSessions,
   useSession,
@@ -34,18 +36,18 @@ import {
 } from '@/features/sessions/api'
 import { useMonitoringSummary } from '@/features/monitoring/api'
 import type { StrategyCard } from '@/features/monitoring/api'
-import { EventLogHelpPopover } from '@/features/monitoring/EventLogHelpPopover'
+import { DetailGuidePopover, EVENT_LOG_GUIDE_SECTIONS, type GuideSection } from '@/features/monitoring/EventLogHelpPopover'
 import { useStrategies } from '@/features/strategies/api'
 import { useUiStore } from '@/stores/ui-store'
 import { CandlestickChart } from '@/shared/charts/CandlestickChart'
 import { useChartStream } from '@/features/monitoring/useChartStream'
-import { useActiveSymbolPrices } from '@/features/monitoring/useActiveSymbolPrices'
+import { useActiveSymbolPrices, type LiveSymbolPrice } from '@/features/monitoring/useActiveSymbolPrices'
 import { StrategyExplainPanel } from '@/features/monitoring/StrategyExplainPanel'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useLogs } from '@/features/logs/api'
 import {
+  formatDateTime,
   formatTime,
-  translateConnectionState,
   translateLogChannel,
   translateLogLevel,
   translateMode,
@@ -55,29 +57,340 @@ import {
   translateSignalAction,
 } from '@/shared/lib/i18n'
 import { apiClient } from '@/shared/api/client'
+import type { Order, RiskEvent, Signal } from '@/entities/session/types'
 import type { StrategyVersion } from '@/entities/strategy/types'
 import type { ApiResponse } from '@/shared/types/api'
 import { resolveChartIndicatorSettings } from '@/shared/charts/chartIndicators'
-import { StatusText } from '@/shared/ui/StatusText'
+import { StatusText, type StatusTextTone } from '@/shared/ui/StatusText'
 import { useAnimatedTableRows } from '@/shared/ui/useAnimatedTableRows'
 
 const DETAIL_REFRESH_INTERVAL_MS = 2_000
 const POSITION_REFRESH_INTERVAL_MS = 5_000
 const SESSION_REFRESH_INTERVAL_MS = 5_000
 const SESSION_LIST_REFRESH_INTERVAL_MS = 10_000
+const SIGNAL_ORDER_MATCH_WINDOW_MS = 15 * 60 * 1000
+const GUIDE_OVERLAY_BG = 'rgba(7, 10, 18, 0.86)'
+
+type SignalOrderTimelineRow = {
+  id: string
+  kind: 'signal' | 'order-only'
+  sortAt: number
+  signal?: Signal
+  order?: Order
+  riskEvent?: RiskEvent
+}
+
+type EntryRateLayout = 'stacked' | 'inline'
+type EntryRateStage = 1 | 2 | 3 | 4
+
+function toTimestamp(value: string | null | undefined): number {
+  if (!value) {
+    return 0
+  }
+  const parsed = new Date(value).getTime()
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function getOrderEventTime(order: Order): string | null {
+  return order.submitted_at ?? order.filled_at ?? null
+}
+
+function getOrderTimestamp(order: Order): number {
+  return toTimestamp(getOrderEventTime(order))
+}
+
+function getRiskTimestamp(event: RiskEvent): number {
+  return toTimestamp(event.created_at)
+}
+
+function formatEntryRate(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) {
+    return '-'
+  }
+  return `${Math.round(value)}%`
+}
+
+function getEntryRateStage(value: number | null | undefined): EntryRateStage | null {
+  if (value == null || !Number.isFinite(value)) {
+    return null
+  }
+  if (value < 25) {
+    return 1
+  }
+  if (value < 50) {
+    return 2
+  }
+  if (value < 75) {
+    return 3
+  }
+  return 4
+}
+
+function formatEntryRateWindowLabel(windowSec: number | null | undefined): string {
+  if (windowSec == null || windowSec <= 0) {
+    return '최근 체결 기준'
+  }
+  if (windowSec % 60 === 0) {
+    const minutes = windowSec / 60
+    return `최근 ${minutes}분 체결 기준`
+  }
+  return `최근 ${windowSec}초 체결 기준`
+}
+
+function doesOrderMatchSignal(signal: Signal, order: Order): boolean {
+  if (signal.symbol !== order.symbol) {
+    return false
+  }
+  if (signal.action === 'ENTER') {
+    return order.order_role === 'ENTRY'
+  }
+  return order.order_role !== 'ENTRY'
+}
+
+const SIGNAL_ORDER_GUIDE_SECTIONS: GuideSection[] = [
+  {
+    title: '신호 컬럼',
+    items: [
+      {
+        label: '진입',
+        description: 'ENTER 신호입니다. 전략 조건이 충족되어 새 진입을 시도한 경우입니다.',
+      },
+      {
+        label: '청산',
+        description: 'EXIT 신호입니다. 보유 포지션을 닫는 방향의 전략 판단입니다.',
+      },
+      {
+        label: '차단',
+        description: '신호는 생성됐지만 리스크 규칙이나 실행 조건 때문에 주문으로 이어지지 않은 경우 함께 표시됩니다.',
+      },
+      {
+        label: '주문 단독',
+        description: '연결 가능한 신호 없이 주문 기록만 남은 행입니다. 과거 데이터나 매칭 불가 케이스를 뜻합니다.',
+      },
+    ],
+  },
+  {
+    title: '실행 결과 컬럼',
+    items: [
+      {
+        label: '생성됨 / 제출됨 / 부분 체결',
+        description: '주문이 생성되었거나, 제출되었거나, 일부만 체결된 상태입니다.',
+      },
+      {
+        label: '체결 완료',
+        description: '주문이 전부 체결된 상태이며, 아래 줄에는 주문 시간만 표시됩니다.',
+      },
+      {
+        label: '취소됨 / 거부됨 / 만료됨 / 실패',
+        description: '주문이 정상 체결로 끝나지 않은 상태입니다.',
+      },
+      {
+        label: '리스크 차단',
+        description: '리스크 규칙이 실행을 막은 상태입니다. 행의 i 아이콘 툴팁에서 코드와 메시지를 확인할 수 있습니다.',
+      },
+      {
+        label: '실행 차단',
+        description: '주문 생성 전 실행 단계에서 차단된 상태입니다. 자세한 사유는 i 아이콘 툴팁에 들어갑니다.',
+      },
+      {
+        label: '주문 연결 없음',
+        description: '신호는 기록됐지만 연결된 주문이나 차단 기록을 찾지 못한 상태입니다.',
+      },
+    ],
+  },
+]
+
+function ExecutionResultHint({
+  label,
+  tone = 'default',
+  tooltip,
+}: {
+  label: string
+  tone?: StatusTextTone
+  tooltip?: ReactNode
+}) {
+  return (
+    <Stack direction="row" spacing={0.5} alignItems="center">
+      <StatusText tone={tone}>{label}</StatusText>
+      {tooltip ? (
+        <Tooltip
+          arrow
+          placement="top-start"
+          title={tooltip}
+          slotProps={{
+            tooltip: {
+              sx: {
+                color: '#e7edf7',
+                bgcolor: GUIDE_OVERLAY_BG,
+                backgroundImage: 'none',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                boxShadow: '0 24px 48px rgba(0, 0, 0, 0.42)',
+                backdropFilter: 'blur(18px)',
+              },
+            },
+            arrow: {
+              sx: {
+                color: GUIDE_OVERLAY_BG,
+              },
+            },
+          }}
+        >
+          <Box
+            component="span"
+            onClick={(event) => event.stopPropagation()}
+            onMouseDown={(event) => event.stopPropagation()}
+            sx={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              color: 'text.secondary',
+              cursor: 'help',
+            }}
+          >
+            <Info size={12} strokeWidth={2.1} />
+          </Box>
+        </Tooltip>
+      ) : null}
+    </Stack>
+  )
+}
+
+function EntryRateIndicator({
+  value,
+  label,
+  variant = 'table',
+  showLabel = false,
+}: {
+  value: number | null | undefined
+  label?: string
+  variant?: 'table' | 'header'
+  showLabel?: boolean
+}) {
+  const stage = getEntryRateStage(value)
+
+  if (stage === null) {
+    return (
+      <Typography variant="caption" color="text.secondary" noWrap>
+        대기
+      </Typography>
+    )
+  }
+
+  const stageText = `${formatEntryRate(value)}(${stage}단계)`
+  const displayValue = showLabel && label ? `${label} ${stageText}` : stageText
+
+  return (
+    <Stack spacing={0.15} alignItems={variant === 'header' ? 'flex-start' : 'flex-end'}>
+      <Typography
+        variant={variant === 'header' ? 'body2' : 'caption'}
+        fontWeight={700}
+        noWrap
+        sx={{
+          color: variant === 'header' ? '#e2e8f0' : 'text.primary',
+          lineHeight: 1.15,
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        {displayValue}
+      </Typography>
+    </Stack>
+  )
+}
+
+function EntryRateSummary({
+  price,
+  layout = 'stacked',
+  showWindowLabel = false,
+}: {
+  price?: LiveSymbolPrice | null
+  layout?: EntryRateLayout
+  showWindowLabel?: boolean
+}) {
+  const buyRate = price?.buy_entry_rate_pct ?? null
+  const sellRate = price?.sell_entry_rate_pct ?? null
+  const hasRates = buyRate != null && Number.isFinite(buyRate) && sellRate != null && Number.isFinite(sellRate)
+  const windowLabel = formatEntryRateWindowLabel(price?.entry_rate_window_sec)
+
+  if (!hasRates) {
+    return (
+      <Stack
+        direction={layout === 'inline' ? 'row' : 'column'}
+        spacing={layout === 'inline' ? 0.75 : 0.25}
+        alignItems={layout === 'inline' ? 'center' : 'flex-start'}
+      >
+        {showWindowLabel ? (
+          <Typography variant="caption" sx={{ color: '#94a3b8' }}>
+            {windowLabel}
+          </Typography>
+        ) : null}
+        <Typography variant="caption" color="text.secondary">
+          진입률 데이터 대기
+        </Typography>
+      </Stack>
+    )
+  }
+
+  return (
+    <Stack
+      direction={layout === 'inline' ? 'row' : 'column'}
+      spacing={layout === 'inline' ? 0.9 : 0.2}
+      alignItems={layout === 'inline' ? 'center' : 'flex-start'}
+      flexWrap="wrap"
+      useFlexGap={layout === 'inline'}
+    >
+      {showWindowLabel ? (
+        <Typography variant="caption" sx={{ color: '#94a3b8' }}>
+          {windowLabel}
+        </Typography>
+      ) : null}
+      <EntryRateIndicator value={buyRate} label="매수" variant={layout === 'inline' ? 'header' : 'table'} showLabel />
+      <EntryRateIndicator value={sellRate} label="매도" variant={layout === 'inline' ? 'header' : 'table'} showLabel />
+    </Stack>
+  )
+}
+
+function SessionSelectMeta({
+  versionLabel,
+  status,
+  mode,
+  executedAt,
+}: {
+  versionLabel: string
+  status: string
+  mode: string
+  executedAt: string | null
+}) {
+  return (
+    <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block' }}>
+      <Box component="span">{versionLabel}</Box>
+      <Box component="span" sx={{ mx: 0.45 }}>
+        /
+      </Box>
+      <Box component="span" sx={{ color: status === 'RUNNING' ? 'primary.main' : 'text.secondary' }}>
+        {translateSessionStatus(status)}
+      </Box>
+      <Box component="span" sx={{ mx: 0.45 }}>
+        /
+      </Box>
+      <Box component="span">{translateMode(mode)}</Box>
+      <Box component="span" sx={{ mx: 0.45 }}>
+        /
+      </Box>
+      <Box component="span">{executedAt ? formatDateTime(executedAt) : '실행 전'}</Box>
+    </Typography>
+  )
+}
 
 export default function MonitoringPage() {
-  const navigate = useNavigate()
   const [selectedStrategyId, setSelectedStrategyId] = useState<string | null>(null)
   const [bottomTab, setBottomTab] = useState(0)
   const [selectedSignalId, setSelectedSignalId] = useState<string | null>(null)
 
   const shouldLoadEventLogs = bottomTab === 0
   const shouldLoadStrategyExplain = bottomTab === 1
-  const shouldLoadSignals = bottomTab === 2
-  const shouldLoadOrders = bottomTab === 3
-  const shouldLoadRiskEvents = bottomTab === 4
-  const shouldLoadSignalData = shouldLoadStrategyExplain || shouldLoadSignals
+  const shouldLoadSignalOrderFlow = bottomTab === 2
+  const shouldLoadOrders = shouldLoadSignalOrderFlow
+  const shouldLoadRiskEvents = bottomTab === 3 || shouldLoadSignalOrderFlow
+  const shouldLoadSignalData = shouldLoadStrategyExplain || shouldLoadSignalOrderFlow
 
   const { data: sessions, isLoading: isLoadingSessions } = useSessions({ refetchIntervalMs: SESSION_LIST_REFRESH_INTERVAL_MS })
   const { data: monitoringSummary } = useMonitoringSummary()
@@ -164,14 +477,95 @@ export default function MonitoringPage() {
     }),
     [signals],
   )
+  const signalOrderRows = useMemo<SignalOrderTimelineRow[]>(() => {
+    const signalsAsc = [...(signals ?? [])].sort((left, right) => {
+      const timeCompare = toTimestamp(left.snapshot_time) - toTimestamp(right.snapshot_time)
+      if (timeCompare !== 0) {
+        return timeCompare
+      }
+      return left.id.localeCompare(right.id)
+    })
+    const ordersAsc = [...(orders ?? [])].sort((left, right) => {
+      const timeCompare = getOrderTimestamp(left) - getOrderTimestamp(right)
+      if (timeCompare !== 0) {
+        return timeCompare
+      }
+      return left.id.localeCompare(right.id)
+    })
+    const riskEventsAsc = [...(riskEvents ?? [])].sort((left, right) => {
+      const timeCompare = getRiskTimestamp(left) - getRiskTimestamp(right)
+      if (timeCompare !== 0) {
+        return timeCompare
+      }
+      return left.id.localeCompare(right.id)
+    })
+    const usedOrderIds = new Set<string>()
+    const usedRiskEventIds = new Set<string>()
+    const rows: SignalOrderTimelineRow[] = []
 
+    signalsAsc.forEach((signal, index) => {
+      const signalTimestamp = toTimestamp(signal.snapshot_time)
+      const nextSignal = signalsAsc.slice(index + 1).find((candidate) => candidate.symbol === signal.symbol)
+      const nextSignalTimestamp = nextSignal ? toTimestamp(nextSignal.snapshot_time) : Number.POSITIVE_INFINITY
+      const upperBound = Math.min(nextSignalTimestamp, signalTimestamp + SIGNAL_ORDER_MATCH_WINDOW_MS)
+
+      const matchedOrder = ordersAsc.find((order) => (
+        !usedOrderIds.has(order.id)
+        && doesOrderMatchSignal(signal, order)
+        && getOrderTimestamp(order) >= signalTimestamp
+        && getOrderTimestamp(order) <= upperBound
+      ))
+      if (matchedOrder) {
+        usedOrderIds.add(matchedOrder.id)
+      }
+
+      const matchedRiskEvent = matchedOrder
+        ? undefined
+        : riskEventsAsc.find((event) => (
+          !usedRiskEventIds.has(event.id)
+          && event.symbol === signal.symbol
+          && getRiskTimestamp(event) >= signalTimestamp
+          && getRiskTimestamp(event) <= upperBound
+        ))
+      if (matchedRiskEvent) {
+        usedRiskEventIds.add(matchedRiskEvent.id)
+      }
+
+      rows.push({
+        id: `signal:${signal.id}`,
+        kind: 'signal',
+        sortAt: signalTimestamp,
+        signal,
+        order: matchedOrder,
+        riskEvent: matchedRiskEvent,
+      })
+    })
+
+    ordersAsc.forEach((order) => {
+      if (usedOrderIds.has(order.id)) {
+        return
+      }
+      rows.push({
+        id: `order:${order.id}`,
+        kind: 'order-only',
+        sortAt: getOrderTimestamp(order),
+        order,
+      })
+    })
+
+    return rows.sort((left, right) => {
+      const timeCompare = right.sortAt - left.sortAt
+      if (timeCompare !== 0) {
+        return timeCompare
+      }
+      return right.id.localeCompare(left.id)
+    })
+  }, [orders, riskEvents, signals])
   const eventLogRowIds = useMemo(() => eventTimeline.map((log) => `${log.channel}:${log.id}`), [eventTimeline])
-  const signalRowIds = useMemo(() => orderedSignals.map((signal) => signal.id), [orderedSignals])
-  const orderRowIds = useMemo(() => orders?.map((order) => order.id) ?? [], [orders])
+  const signalOrderRowIds = useMemo(() => signalOrderRows.map((row) => row.id), [signalOrderRows])
   const riskRowIds = useMemo(() => riskEvents?.map((event) => event.id) ?? [], [riskEvents])
   const { setRowRef: setEventLogRowRef } = useAnimatedTableRows(eventLogRowIds)
-  const { setRowRef: setSignalRowRef } = useAnimatedTableRows(signalRowIds)
-  const { setRowRef: setOrderRowRef } = useAnimatedTableRows(orderRowIds)
+  const { setRowRef: setSignalOrderRowRef } = useAnimatedTableRows(signalOrderRowIds)
   const { setRowRef: setRiskRowRef } = useAnimatedTableRows(riskRowIds)
 
   useEffect(() => {
@@ -194,8 +588,8 @@ export default function MonitoringPage() {
   }, [activeSessionId, selectedSessionId, setSelectedSession])
 
   useEffect(() => {
-    if (bottomTab > 4) {
-      setBottomTab(4)
+    if (bottomTab > 3) {
+      setBottomTab(3)
     }
   }, [bottomTab])
 
@@ -212,37 +606,27 @@ export default function MonitoringPage() {
     }
   }, [orderedSignals, selectedSignalId])
 
-  const getModeColor = (mode: string) => {
-    switch (mode) {
-      case 'PAPER': return 'info'
-      case 'LIVE': return 'error'
-      case 'BACKTEST': return 'default'
-      default: return 'default'
-    }
-  }
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'RUNNING': return 'success'
-      case 'STOPPED': return 'default'
-      case 'FAILED': return 'error'
-      case 'PENDING': return 'warning'
-      default: return 'default'
-    }
-  }
-
-  const getConnectionColor = (state: string) => {
-    switch (state) {
-      case 'CONNECTED': return 'success'
-      case 'DISCONNECTED': return 'error'
-      case 'RECONNECTING': return 'warning'
-      case 'DEGRADED': return 'warning'
-      default: return 'default'
-    }
-  }
-
   const getActionTone = (action: string): 'success' | 'danger' => {
     return action === 'ENTER' ? 'success' : 'danger'
+  }
+
+  const getOrderStateTone = (state: string): 'success' | 'warning' | 'danger' | 'info' | 'default' => {
+    switch (state) {
+      case 'FILLED':
+        return 'success'
+      case 'CREATED':
+      case 'SUBMITTED':
+      case 'PARTIALLY_FILLED':
+        return 'info'
+      case 'CANCELLED':
+      case 'EXPIRED':
+        return 'warning'
+      case 'REJECTED':
+      case 'FAILED':
+        return 'danger'
+      default:
+        return 'default'
+    }
   }
 
   const getPnlTone = (value: number): 'success' | 'danger' | 'default' => {
@@ -255,26 +639,17 @@ export default function MonitoringPage() {
     return 'default'
   }
 
-  const getSessionStatusTone = (status: string): 'success' | 'warning' | 'info' | 'danger' | 'default' => {
-    switch (status) {
-      case 'RUNNING':
-        return 'success'
-      case 'PENDING':
-        return 'info'
-      case 'STOPPING':
-        return 'warning'
-      case 'FAILED':
-        return 'danger'
-      default:
-        return 'default'
-    }
-  }
-
   const asNumber = (value: unknown) => {
     const parsed = typeof value === 'number' ? value : Number(value)
     return Number.isFinite(parsed) ? parsed : 0
   }
 
+  const formatPriceValue = (value: number | null | undefined) => {
+    if (value == null || !Number.isFinite(value)) {
+      return '-'
+    }
+    return Math.round(value).toLocaleString('ko-KR')
+  }
   const formatSignedAmount = (value: number) => `${value > 0 ? '+' : ''}${Math.round(value).toLocaleString()}`
   const formatSignedPercent = (value: number) => `${value > 0 ? '+' : ''}${value.toFixed(2)}%`
   const formatChartPrice = (value: number) => Math.round(value).toLocaleString('ko-KR')
@@ -492,6 +867,11 @@ export default function MonitoringPage() {
     return sessionsWithStrategy.filter((entry) => entry.strategyId === selectedStrategyId)
   }, [selectedStrategyId, sessionsWithStrategy])
 
+  const selectedSessionOption = useMemo(
+    () => filteredSessionEntries.find((entry) => entry.session.id === activeSessionId) ?? filteredSessionEntries[0] ?? null,
+    [activeSessionId, filteredSessionEntries],
+  )
+
   useEffect(() => {
     if (!strategyGroups.length) {
       if (selectedStrategyId !== null) {
@@ -525,7 +905,8 @@ export default function MonitoringPage() {
 
     return availableSymbols.map((symbol) => {
       const position = positionBySymbol.get(symbol)
-      const latestPrice = pricesBySymbol[symbol]?.price
+      const livePrice = pricesBySymbol[symbol]
+      const latestPrice = livePrice?.price
       const avgEntryPrice = asNumber(position?.avg_entry_price)
       const quantity = asNumber(position?.quantity)
       const canUseLivePrice =
@@ -545,9 +926,12 @@ export default function MonitoringPage() {
         symbol,
         pnlAmount,
         pnlPercent,
+        price: livePrice ?? null,
       }
     })
   }, [availableSymbols, positions, pricesBySymbol])
+
+  const activeSymbolPrice = activeSymbol ? pricesBySymbol[activeSymbol] ?? null : null
 
   const activeSymbolSignals = useMemo(
     () => orderedSignals.filter((signal) => signal.symbol === activeSymbol),
@@ -605,74 +989,9 @@ export default function MonitoringPage() {
       {/* Top Global Bar */}
       <Card sx={{ flexShrink: 0 }}>
         <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 }, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Stack direction="row" spacing={2} alignItems="center">
-            <Typography variant="h6" sx={{ mr: 2 }}>모니터링</Typography>
-            {session ? (
-              <>
-                <Chip 
-                  label={translateMode(session.mode)} 
-                  size="small" 
-                  sx={{ 
-                    bgcolor: getModeColor(session.mode) === 'default' ? 'action.disabledBackground' : `status.${getModeColor(session.mode)}`,
-                    color: getModeColor(session.mode) === 'default' ? 'text.secondary' : 'white'
-                  }} 
-                />
-                <Chip 
-                  label={translateSessionStatus(session.status)} 
-                  size="small" 
-                  variant="outlined"
-                  sx={{ 
-                    borderColor: getStatusColor(session.status) === 'default' ? 'divider' : `status.${getStatusColor(session.status)}`,
-                    color: getStatusColor(session.status) === 'default' ? 'text.secondary' : `status.${getStatusColor(session.status)}`
-                  }} 
-                />
-                <Typography variant="body2" color="text.secondary" sx={{ fontFamily: 'monospace' }}>
-                  {session.id.split('-')[0]}
-                </Typography>
-                <Divider orientation="vertical" flexItem />
-                <Typography variant="body2" color="text.secondary">
-                  {activeSessionEntry?.strategyName ?? `전략 v${session.strategy_version_id.split('-')[0]}`}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  {activeSessionEntry?.versionNo ? `v${activeSessionEntry.versionNo}` : `v${session.strategy_version_id.split('-')[0]}`}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  {session.started_at ? formatTime(session.started_at) : '시작 전'}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  심볼 {availableSymbols.length}개
-                </Typography>
-                {session.health && (
-                  <Chip 
-                    label={translateConnectionState(session.health.connection_state)} 
-                    size="small" 
-                    variant="outlined" 
-                    sx={{ 
-                      ml: 2,
-                      borderColor: getConnectionColor(session.health.connection_state) === 'default' ? 'divider' : `status.${getConnectionColor(session.health.connection_state)}`,
-                      color: getConnectionColor(session.health.connection_state) === 'default' ? 'text.secondary' : `status.${getConnectionColor(session.health.connection_state)}`
-                    }}
-                  />
-                )}
-                {session.mode === 'LIVE' ? (
-                  <Chip label="실전 안전장치 활성" size="small" color="error" />
-                ) : null}
-              </>
-            ) : (
-              <Typography color="text.secondary" variant="body2">선택된 세션이 없습니다</Typography>
-            )}
-          </Stack>
+          <Typography variant="h6">모니터링</Typography>
           
           <Stack direction="row" spacing={1}>
-            {selectedStrategyGroup?.isNavigable ? (
-              <Button
-                variant="text"
-                color="inherit"
-                onClick={() => navigate(`/strategies/${selectedStrategyGroup.strategyId}`)}
-              >
-                전략 상세
-              </Button>
-            ) : null}
             <Button
               variant="outlined"
               color="inherit"
@@ -723,7 +1042,7 @@ export default function MonitoringPage() {
       <Box sx={{ display: 'flex', flexGrow: 1, gap: 2, minHeight: 0 }}>
         
         {/* Left Column - Strategy > Session > PnL */}
-        <Box sx={{ width: 360, display: 'flex', flexDirection: 'column', gap: 2, flexShrink: 0, minHeight: 0 }}>
+        <Box sx={{ width: 400, display: 'flex', flexDirection: 'column', gap: 2, flexShrink: 0, minHeight: 0 }}>
           <Card sx={{ minHeight: 220, maxHeight: 260, display: 'flex', flexDirection: 'column' }}>
             <Box sx={{ px: 2, py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
               <Typography variant="subtitle2" fontWeight={700}>
@@ -769,11 +1088,8 @@ export default function MonitoringPage() {
                           }}
                         >
                           <TableCell sx={{ minWidth: 0 }}>
-                            <Typography variant="body2" fontWeight={700} noWrap>
+                            <Typography variant="body2" fontWeight={500} noWrap>
                               {group.strategyName}
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary" noWrap>
-                              {group.strategyKey}
                             </Typography>
                           </TableCell>
                           <TableCell>
@@ -806,7 +1122,7 @@ export default function MonitoringPage() {
             </Box>
           </Card>
 
-          <Card sx={{ flexGrow: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          <Card sx={{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
             <Box sx={{ px: 2, py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
               <Typography variant="subtitle2" fontWeight={700}>
                 세션
@@ -815,12 +1131,11 @@ export default function MonitoringPage() {
                 {selectedStrategyGroup ? `${selectedStrategyGroup.strategyName}의 세션` : '전략을 먼저 선택하세요'}
               </Typography>
             </Box>
-            <Box sx={{ flexGrow: 1, minHeight: 0 }}>
+            <Box>
               {isLoadingSessions ? (
                 <Stack spacing={1} sx={{ p: 2 }}>
                   <Skeleton variant="rounded" height={40} />
-                  <Skeleton variant="rounded" height={40} />
-                  <Skeleton variant="rounded" height={40} />
+                  <Skeleton variant="rounded" height={28} />
                 </Stack>
               ) : filteredSessionEntries.length === 0 ? (
                 <Box sx={{ p: 2 }}>
@@ -829,55 +1144,98 @@ export default function MonitoringPage() {
                   </Typography>
                 </Box>
               ) : (
-                <TableContainer sx={{ maxHeight: '100%' }}>
-                  <Table size="small" stickyHeader>
-                    <TableHead>
-                      <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 11 } }}>
-                        <TableCell>세션</TableCell>
-                        <TableCell>버전</TableCell>
-                        <TableCell>상태</TableCell>
-                        <TableCell align="right">시작</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {filteredSessionEntries.map(({ session: currentSession, versionNo }) => (
-                        <TableRow
-                          key={currentSession.id}
-                          hover
-                          onClick={() => handleSessionSelect(currentSession.id)}
-                          sx={{
-                            cursor: 'pointer',
-                            bgcolor: activeSessionId === currentSession.id ? 'rgba(34, 231, 107, 0.05)' : 'transparent',
-                          }}
-                        >
-                          <TableCell sx={{ minWidth: 0 }}>
-                            <Typography variant="body2" fontFamily="monospace" noWrap>
-                              {currentSession.id.split('-')[0]}
+                <Stack spacing={1.5} sx={{ p: 2 }}>
+                  <FormControl fullWidth size="small">
+                    <Select
+                      value={selectedSessionOption?.session.id ?? ''}
+                      onChange={(event: SelectChangeEvent<string>) => handleSessionSelect(event.target.value)}
+                      displayEmpty
+                      renderValue={(value) => {
+                        const currentEntry = filteredSessionEntries.find((entry) => entry.session.id === value) ?? null
+                        if (!currentEntry) {
+                          return <Typography color="text.secondary">세션 선택</Typography>
+                        }
+
+                        const executedAt = currentEntry.session.started_at ?? currentEntry.session.created_at ?? null
+                        const versionLabel = currentEntry.versionNo
+                          ? `v${currentEntry.versionNo}`
+                          : `v${currentEntry.session.strategy_version_id.split('-')[0]}`
+
+                        return (
+                          <Stack spacing={0.2} sx={{ minWidth: 0 }}>
+                            <Typography variant="body2" fontFamily="monospace" fontWeight={500} noWrap>
+                              {currentEntry.session.id.split('-')[0]}
                             </Typography>
-                            <Typography variant="caption" color="text.secondary" noWrap>
-                              {translateMode(currentSession.mode)}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="caption" color="text.secondary">
-                              {versionNo ? `v${versionNo}` : `v${currentSession.strategy_version_id.split('-')[0]}`}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <StatusText tone={getSessionStatusTone(currentSession.status)}>
-                              {translateSessionStatus(currentSession.status)}
-                            </StatusText>
-                          </TableCell>
-                          <TableCell align="right">
-                            <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
-                              {currentSession.started_at ? formatTime(currentSession.started_at) : '시작 전'}
-                            </Typography>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
+                            <SessionSelectMeta
+                              versionLabel={versionLabel}
+                              status={currentEntry.session.status}
+                              mode={currentEntry.session.mode}
+                              executedAt={executedAt}
+                            />
+                          </Stack>
+                        )
+                      }}
+                      MenuProps={{
+                        PaperProps: {
+                          sx: {
+                            maxHeight: 360,
+                            mt: 0.75,
+                            color: '#e7edf7',
+                            bgcolor: GUIDE_OVERLAY_BG,
+                            backgroundImage: 'none',
+                            border: '1px solid rgba(255, 255, 255, 0.08)',
+                            boxShadow: '0 24px 48px rgba(0, 0, 0, 0.42)',
+                            backdropFilter: 'blur(18px)',
+                          },
+                        },
+                        MenuListProps: {
+                          sx: {
+                            p: 0.75,
+                          },
+                        },
+                      }}
+                    >
+                      {filteredSessionEntries.map((entry) => {
+                        const currentSession = entry.session
+                        const executedAt = currentSession.started_at ?? currentSession.created_at ?? null
+                        const versionLabel = entry.versionNo ? `v${entry.versionNo}` : `v${currentSession.strategy_version_id.split('-')[0]}`
+
+                        return (
+                          <MenuItem
+                            key={currentSession.id}
+                            value={currentSession.id}
+                            sx={{
+                              borderRadius: 1.25,
+                              alignItems: 'flex-start',
+                              py: 1,
+                              '&:hover': {
+                                bgcolor: 'rgba(255, 255, 255, 0.05)',
+                              },
+                              '&.Mui-selected': {
+                                bgcolor: 'rgba(34, 197, 94, 0.18)',
+                              },
+                              '&.Mui-selected:hover': {
+                                bgcolor: 'rgba(34, 197, 94, 0.24)',
+                              },
+                            }}
+                          >
+                            <Stack spacing={0.25} sx={{ minWidth: 0 }}>
+                              <Typography variant="body2" fontFamily="monospace" fontWeight={500} noWrap>
+                                {currentSession.id.split('-')[0]}
+                              </Typography>
+                              <SessionSelectMeta
+                                versionLabel={versionLabel}
+                                status={currentSession.status}
+                                mode={currentSession.mode}
+                                executedAt={executedAt}
+                              />
+                            </Stack>
+                          </MenuItem>
+                        )
+                      })}
+                    </Select>
+                  </FormControl>
+                </Stack>
               )}
             </Box>
           </Card>
@@ -888,7 +1246,28 @@ export default function MonitoringPage() {
                 <Typography variant="subtitle2" fontWeight={700}>
                   수익 현황
                 </Typography>
-                <Tooltip title="초기 자금 100만원" placement="top" arrow>
+                <Tooltip
+                  title="초기 자금 100만원"
+                  placement="top"
+                  arrow
+                  slotProps={{
+                    tooltip: {
+                      sx: {
+                        color: '#e7edf7',
+                        bgcolor: GUIDE_OVERLAY_BG,
+                        backgroundImage: 'none',
+                        border: '1px solid rgba(255, 255, 255, 0.08)',
+                        boxShadow: '0 24px 48px rgba(0, 0, 0, 0.42)',
+                        backdropFilter: 'blur(18px)',
+                      },
+                    },
+                    arrow: {
+                      sx: {
+                        color: GUIDE_OVERLAY_BG,
+                      },
+                    },
+                  }}
+                >
                   <Box
                     component="span"
                     aria-label="초기 자금 정보"
@@ -919,17 +1298,19 @@ export default function MonitoringPage() {
             <Box sx={{ flexGrow: 1, minHeight: 0 }}>
               <TableContainer sx={{ maxHeight: '100%' }}>
                 <Table size="small" stickyHeader sx={{ '& .MuiTableCell-root': { py: 1, px: 1.5 } }}>
-                  <TableHead>
-                    <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 11 } }}>
-                      <TableCell>심볼</TableCell>
-                      <TableCell align="right">수익률</TableCell>
-                      <TableCell align="right">손익</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {!symbolPerformanceRows.length ? (
+                    <TableHead>
+                      <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 11 } }}>
+                        <TableCell>심볼</TableCell>
+                        <TableCell align="right">매수</TableCell>
+                        <TableCell align="right">매도</TableCell>
+                        <TableCell align="right">수익률</TableCell>
+                        <TableCell align="right">손익</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {!symbolPerformanceRows.length ? (
                       <TableRow>
-                        <TableCell colSpan={3} align="center" sx={{ py: 4 }}>
+                        <TableCell colSpan={5} align="center" sx={{ py: 4 }}>
                           <Typography variant="body2" color="text.secondary">
                             생성된 성과가 없습니다
                           </Typography>
@@ -953,6 +1334,16 @@ export default function MonitoringPage() {
                               <Typography variant="body2" fontWeight={700}>
                                 {row.symbol}
                               </Typography>
+                            </TableCell>
+                            <TableCell align="right">
+                              <Box sx={{ display: 'inline-flex', justifyContent: 'flex-end', minWidth: 0 }}>
+                                <EntryRateIndicator value={row.price?.buy_entry_rate_pct ?? null} />
+                              </Box>
+                            </TableCell>
+                            <TableCell align="right">
+                              <Box sx={{ display: 'inline-flex', justifyContent: 'flex-end', minWidth: 0 }}>
+                                <EntryRateIndicator value={row.price?.sell_entry_rate_pct ?? null} />
+                              </Box>
                             </TableCell>
                             <TableCell align="right">
                               <StatusText tone={getPnlTone(row.pnlPercent)} variant="body2">
@@ -1001,12 +1392,13 @@ export default function MonitoringPage() {
             }}
           >
             <Stack direction="row" justifyContent="space-between" alignItems="flex-start" flexWrap="wrap" gap={1.5}>
-              <Stack spacing={0.5}>
+                <Stack spacing={0.5}>
                 <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
                   <Typography sx={{ fontSize: 22, fontWeight: 700, color: '#f8fafc', lineHeight: 1.1 }}>
                     {activeSymbol || '선택된 심볼 없음'}
                   </Typography>
                 </Stack>
+                {activeSymbol ? <EntryRateSummary price={activeSymbolPrice} layout="inline" showWindowLabel /> : null}
                 {latestCandle ? (
                   <Stack direction="row" spacing={1.25} flexWrap="wrap" sx={{ color: '#94a3b8' }}>
                     <Typography variant="caption" sx={{ color: '#94a3b8' }}>
@@ -1144,12 +1536,9 @@ export default function MonitoringPage() {
         {/* Right Panel - Detail Tabs */}
         <Card sx={{ width: 440, display: 'flex', flexDirection: 'column', flexShrink: 0, minHeight: 0 }}>
           <Box sx={{ px: 2, py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
-            <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={2}>
-              <Typography variant="subtitle2" fontWeight={700}>
-                세션 상세
-              </Typography>
-              <EventLogHelpPopover active={bottomTab === 0} />
-            </Stack>
+            <Typography variant="subtitle2" fontWeight={700}>
+              세션 상세
+            </Typography>
             <Typography variant="caption" color="text.secondary">
               {session
                 ? `${activeSessionEntry?.strategyName ?? selectedStrategyGroup?.strategyName ?? '선택된 전략 없음'} · ${session.id.split('-')[0]}`
@@ -1167,51 +1556,56 @@ export default function MonitoringPage() {
             >
               <Tab label="이벤트 로그" sx={{ minHeight: 40, py: 1 }} />
               <Tab label="전략 해설" sx={{ minHeight: 40, py: 1 }} />
-              <Tab label="신호" sx={{ minHeight: 40, py: 1 }} />
-              <Tab label="주문" sx={{ minHeight: 40, py: 1 }} />
+              <Tab label="신호·주문" sx={{ minHeight: 40, py: 1 }} />
               <Tab label="리스크" sx={{ minHeight: 40, py: 1 }} />
             </Tabs>
           </Box>
           <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
             {bottomTab === 0 ? (
-              <TableContainer>
-                <Table size="small">
-                  <TableHead>
-                    <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 11 } }}>
-                      <TableCell>시간</TableCell>
-                      <TableCell>레벨</TableCell>
-                      <TableCell>채널</TableCell>
-                      <TableCell>메시지</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {!eventTimeline.length ? (
-                      <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><Typography color="text.secondary">이벤트 로그가 없습니다</Typography></TableCell></TableRow>
-                    ) : (
-                      eventTimeline.slice(0, 30).map((log) => (
-                        <TableRow
-                          key={`${log.channel}:${log.id}`}
-                          ref={setEventLogRowRef(`${log.channel}:${log.id}`)}
-                          hover
-                          sx={{ '& td': { backgroundColor: 'transparent' } }}
-                        >
-                          <TableCell><Typography variant="caption" color="text.secondary">{formatTime(log.timestamp)}</Typography></TableCell>
-                          <TableCell><Typography variant="caption">{translateLogLevel(String(log.level).toLowerCase())}</Typography></TableCell>
-                          <TableCell><Typography variant="caption">{translateLogChannel(log.channel)}</Typography></TableCell>
-                          <TableCell>
-                            <Stack spacing={0.25}>
-                              <Typography variant="caption">{log.message}</Typography>
-                              <Typography variant="caption" color="text.secondary" fontFamily="monospace">
-                                {log.event_type ?? '-'}
-                              </Typography>
-                            </Stack>
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </TableContainer>
+              <Box>
+                <DetailGuidePopover
+                  summary="채널, 레벨, 이벤트 코드를 함께 보면 로그 의미를 빠르게 파악할 수 있습니다."
+                  sections={EVENT_LOG_GUIDE_SECTIONS}
+                  footnote="로그 코드는 버전에 따라 조금 달라질 수 있습니다. 해석할 때는 채널과 메시지도 함께 보세요."
+                />
+                <TableContainer>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 11 } }}>
+                        <TableCell>시간</TableCell>
+                        <TableCell>레벨</TableCell>
+                        <TableCell>채널</TableCell>
+                        <TableCell>메시지</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {!eventTimeline.length ? (
+                        <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><Typography color="text.secondary">이벤트 로그가 없습니다</Typography></TableCell></TableRow>
+                      ) : (
+                        eventTimeline.slice(0, 30).map((log) => (
+                          <TableRow
+                            key={`${log.channel}:${log.id}`}
+                            ref={setEventLogRowRef(`${log.channel}:${log.id}`)}
+                            sx={{ '& td': { backgroundColor: 'transparent' } }}
+                          >
+                            <TableCell><Typography variant="caption" color="text.secondary">{formatTime(log.timestamp)}</Typography></TableCell>
+                            <TableCell><Typography variant="caption">{translateLogLevel(String(log.level).toLowerCase())}</Typography></TableCell>
+                            <TableCell><Typography variant="caption">{translateLogChannel(log.channel)}</Typography></TableCell>
+                            <TableCell>
+                              <Stack spacing={0.25}>
+                                <Typography variant="caption">{log.message}</Typography>
+                                <Typography variant="caption" color="text.secondary" fontFamily="monospace">
+                                  {log.event_type ?? '-'}
+                                </Typography>
+                              </Stack>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </Box>
             ) : null}
 
             {bottomTab === 1 ? (
@@ -1224,98 +1618,154 @@ export default function MonitoringPage() {
             ) : null}
 
             {bottomTab === 2 ? (
-              <TableContainer>
-                <Table size="small">
-                  <TableHead>
-                    <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 11 } }}>
-                      <TableCell>시간</TableCell>
-                      <TableCell>심볼</TableCell>
-                      <TableCell>액션</TableCell>
-                      <TableCell align="right">가격</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {!orderedSignals.length ? (
-                      <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><Typography color="text.secondary">신호가 없습니다</Typography></TableCell></TableRow>
-                    ) : (
-                      orderedSignals.map((signal) => {
-                        const isSelected = signal.id === selectedSignalId
-                        const isExplainBlocked = signal.blocked || Boolean(signal.explain_payload?.risk_blocks?.length)
+              <Box>
+                <DetailGuidePopover
+                  summary="신호 컬럼과 실행 결과 컬럼에 들어갈 수 있는 값들을 눌러서 확인할 수 있습니다."
+                  sections={SIGNAL_ORDER_GUIDE_SECTIONS}
+                  footnote="차단 계열 값은 행의 i 아이콘 툴팁에서 상세 코드나 메시지를 볼 수 있습니다."
+                />
+                <TableContainer>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 11 } }}>
+                        <TableCell>시간</TableCell>
+                        <TableCell>심볼</TableCell>
+                        <TableCell>신호</TableCell>
+                        <TableCell>실행 결과</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {!signalOrderRows.length ? (
+                        <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><Typography color="text.secondary">신호와 주문이 없습니다</Typography></TableCell></TableRow>
+                      ) : (
+                        signalOrderRows.map((row) => {
+                          if (row.kind === 'order-only' && row.order) {
+                            const orderTime = getOrderEventTime(row.order)
+                            return (
+                              <TableRow
+                                key={row.id}
+                                ref={setSignalOrderRowRef(row.id)}
+                                sx={{ '& td': { backgroundColor: 'transparent' } }}
+                              >
+                                <TableCell>
+                                  <Typography variant="caption" color="text.secondary">
+                                    {orderTime ? formatTime(orderTime) : '-'}
+                                  </Typography>
+                                </TableCell>
+                                <TableCell><Typography variant="caption" fontWeight={600}>{row.order.symbol}</Typography></TableCell>
+                                <TableCell>
+                                  <Stack spacing={0.25}>
+                                    <StatusText tone="info">주문 단독</StatusText>
+                                    <Typography variant="caption" color="text.secondary">
+                                      {translateOrderRole(row.order.order_role)}
+                                    </Typography>
+                                  </Stack>
+                                </TableCell>
+                                <TableCell>
+                                  <Stack spacing={0.25}>
+                                    <StatusText tone={getOrderStateTone(row.order.order_state)}>
+                                      {translateOrderState(row.order.order_state)}
+                                    </StatusText>
+                                    {orderTime ? <Typography variant="caption" color="text.secondary">{formatTime(orderTime)}</Typography> : null}
+                                  </Stack>
+                                </TableCell>
+                              </TableRow>
+                            )
+                          }
 
-                        return (
-                        <TableRow
-                          key={signal.id}
-                          ref={setSignalRowRef(signal.id)}
-                          hover
-                          onClick={() => {
-                            setSelectedSignalId(signal.id)
-                            setBottomTab(1)
-                          }}
-                          sx={{
-                            cursor: 'pointer',
-                            bgcolor: isSelected
-                              ? 'action.hover'
-                              : (isExplainBlocked ? 'rgba(255, 152, 0, 0.05)' : 'transparent'),
-                            '& td': { backgroundColor: 'transparent' },
-                          }}
-                        >
-                          <TableCell><Typography variant="caption" color="text.secondary">{formatTime(signal.snapshot_time)}</Typography></TableCell>
-                          <TableCell><Typography variant="caption" fontWeight={600}>{signal.symbol}</Typography></TableCell>
-                          <TableCell>
-                            <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap">
-                              <StatusText tone={getActionTone(signal.action)}>{translateSignalAction(signal.action)}</StatusText>
-                              {isExplainBlocked ? <StatusText tone="warning">차단</StatusText> : null}
-                            </Stack>
-                          </TableCell>
-                          <TableCell align="right">
-                            <Typography variant="caption" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                              {signal.signal_price?.toLocaleString() ?? '-'}
-                            </Typography>
-                          </TableCell>
-                        </TableRow>
-                        )
-                      })
-                    )}
-                  </TableBody>
-                </Table>
-              </TableContainer>
+                          if (!row.signal) {
+                            return null
+                          }
+
+                          const signal = row.signal
+                          const explainRiskBlocks = Array.isArray(signal.explain_payload?.risk_blocks)
+                            ? signal.explain_payload.risk_blocks
+                            : []
+                          const isBlocked = signal.blocked || explainRiskBlocks.length > 0 || Boolean(row.riskEvent)
+
+                          return (
+                            <TableRow
+                              key={row.id}
+                              ref={setSignalOrderRowRef(row.id)}
+                              sx={{ '& td': { backgroundColor: 'transparent' } }}
+                            >
+                              <TableCell><Typography variant="caption" color="text.secondary">{formatTime(signal.snapshot_time)}</Typography></TableCell>
+                              <TableCell><Typography variant="caption" fontWeight={600}>{signal.symbol}</Typography></TableCell>
+                              <TableCell>
+                                <Stack spacing={0.25}>
+                                  <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap">
+                                    <StatusText tone={getActionTone(signal.action)}>{translateSignalAction(signal.action)}</StatusText>
+                                    {isBlocked ? <StatusText tone="warning">차단</StatusText> : null}
+                                  </Stack>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                                    {formatPriceValue(signal.signal_price)}
+                                  </Typography>
+                                </Stack>
+                              </TableCell>
+                              <TableCell>
+                                {row.order ? (
+                                  <Stack spacing={0.25}>
+                                    <StatusText tone={getOrderStateTone(row.order.order_state)}>
+                                      {translateOrderState(row.order.order_state)}
+                                    </StatusText>
+                                    {getOrderEventTime(row.order) ? (
+                                      <Typography variant="caption" color="text.secondary">
+                                        {formatTime(getOrderEventTime(row.order) as string)}
+                                      </Typography>
+                                    ) : null}
+                                  </Stack>
+                                ) : row.riskEvent ? (
+                                  <ExecutionResultHint
+                                    label="리스크 차단"
+                                    tone="warning"
+                                    tooltip={(
+                                      <Stack spacing={0.5}>
+                                        <Typography variant="caption" sx={{ color: '#f8fafc', fontFamily: 'Consolas, "SFMono-Regular", Menlo, monospace' }}>
+                                          {row.riskEvent.code}
+                                        </Typography>
+                                        <Typography variant="caption" sx={{ color: 'rgba(226, 232, 240, 0.88)' }}>
+                                          {row.riskEvent.message}
+                                        </Typography>
+                                      </Stack>
+                                    )}
+                                  />
+                                ) : explainRiskBlocks.length ? (
+                                  <ExecutionResultHint
+                                    label="실행 차단"
+                                    tone="warning"
+                                    tooltip={(
+                                      <Stack spacing={0.5}>
+                                        <Typography variant="caption" sx={{ color: 'rgba(226, 232, 240, 0.88)' }}>
+                                          차단 코드
+                                        </Typography>
+                                        <Typography variant="caption" sx={{ color: '#f8fafc', fontFamily: 'Consolas, "SFMono-Regular", Menlo, monospace' }}>
+                                          {explainRiskBlocks.join(', ')}
+                                        </Typography>
+                                      </Stack>
+                                    )}
+                                  />
+                                ) : (
+                                  <ExecutionResultHint
+                                    label="주문 연결 없음"
+                                    tooltip={(
+                                      <Typography variant="caption" sx={{ color: 'rgba(226, 232, 240, 0.88)' }}>
+                                        신호는 기록됐지만 연결된 주문이나 차단 기록을 찾지 못했습니다.
+                                      </Typography>
+                                    )}
+                                  />
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          )
+                        })
+                      )}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </Box>
             ) : null}
 
             {bottomTab === 3 ? (
-              <TableContainer>
-                <Table size="small">
-                  <TableHead>
-                    <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 11 } }}>
-                      <TableCell>시간</TableCell>
-                      <TableCell>역할</TableCell>
-                      <TableCell>상태</TableCell>
-                      <TableCell align="right">수량</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {!orders?.length ? (
-                      <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><Typography color="text.secondary">주문이 없습니다</Typography></TableCell></TableRow>
-                    ) : (
-                      orders.map((order) => (
-                        <TableRow
-                          key={order.id}
-                          ref={setOrderRowRef(order.id)}
-                          hover
-                          sx={{ '& td': { backgroundColor: 'transparent' } }}
-                        >
-                          <TableCell><Typography variant="caption" color="text.secondary">{formatTime(order.submitted_at)}</Typography></TableCell>
-                          <TableCell><Typography variant="caption">{translateOrderRole(order.order_role)}</Typography></TableCell>
-                          <TableCell><Typography variant="caption">{translateOrderState(order.order_state)}</Typography></TableCell>
-                          <TableCell align="right"><Typography variant="caption">{order.executed_qty}/{order.requested_qty}</Typography></TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            ) : null}
-
-            {bottomTab === 4 ? (
               <TableContainer>
                 <Table size="small">
                   <TableHead>
@@ -1334,7 +1784,6 @@ export default function MonitoringPage() {
                         <TableRow
                           key={event.id}
                           ref={setRiskRowRef(event.id)}
-                          hover
                           sx={{ '& td': { backgroundColor: 'transparent' } }}
                         >
                           <TableCell>

@@ -24,6 +24,7 @@ from .strategy_symbol_resolver import (
     strategy_static_symbols,
     strategy_universe_mode,
 )
+from .signal_explain_service import SignalExplainService
 
 if TYPE_CHECKING:
     from .stream_service import StreamService
@@ -55,10 +56,17 @@ def _health_defaults() -> dict[str, object]:
 
 
 class SessionService:
-    def __init__(self, store: LabStore, settings: Settings, stream_service: StreamService | None = None) -> None:
+    def __init__(
+        self,
+        store: LabStore,
+        settings: Settings,
+        stream_service: StreamService | None = None,
+        signal_explain_service: SignalExplainService | None = None,
+    ) -> None:
         self.store = store
         self.settings = settings
         self.stream_service = stream_service
+        self.signal_explain_service = signal_explain_service or SignalExplainService()
 
     def list_sessions(
         self,
@@ -222,8 +230,11 @@ class SessionService:
         }
 
     def get_session_signals(self, session_id: str) -> list[Signal]:
-        self.get_session(session_id)
-        return self.store.list_session_signals(session_id)
+        session = self.get_session(session_id)
+        return [
+            self.signal_explain_service.enrich_signal(signal, session.config_snapshot)
+            for signal in self.store.list_session_signals(session_id)
+        ]
 
     def get_session_positions(self, session_id: str) -> list[Position]:
         self.get_session(session_id)

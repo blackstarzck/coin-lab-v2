@@ -5,10 +5,12 @@ import { App } from './app/App'
 import 'odometer/themes/odometer-theme-minimal.css'
 import './index.css'
 
+const app = (
+  <AppProviders>
+    <App />
+  </AppProviders>
+)
+
 createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <AppProviders>
-      <App />
-    </AppProviders>
-  </StrictMode>,
+  import.meta.env.DEV ? app : <StrictMode>{app}</StrictMode>,
 )

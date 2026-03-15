@@ -183,6 +183,29 @@ def test_invalid_enum_execution_slippage_model() -> None:
     assert "DSL_INVALID_ENUM" in _codes(_issues(result, "errors"))
 
 
+def test_valid_market_trigger_enum() -> None:
+    config = _base_config()
+    market = _section(config, "market")
+    market["trigger"] = "ON_TICK_BATCH"
+    config["market"] = market
+
+    result = StrategyValidator().validate(config, strict=False)
+
+    assert result["valid"] is True
+    assert _issues(result, "errors") == []
+
+
+def test_invalid_market_trigger_enum() -> None:
+    config = _base_config()
+    market = _section(config, "market")
+    market["trigger"] = "ON_EVERYTHING"
+    config["market"] = market
+
+    result = StrategyValidator().validate(config, strict=False)
+
+    assert "DSL_INVALID_ENUM" in _codes(_issues(result, "errors"))
+
+
 def test_invalid_operator_in_leaf() -> None:
     config = _base_config()
     entry = _section(config, "entry")
@@ -340,3 +363,16 @@ def test_static_universe_requires_symbols() -> None:
     result = StrategyValidator().validate(config, strict=False)
 
     assert "DSL_VALIDATION_FAILED" in _codes(_issues(result, "errors"))
+
+
+def test_reentry_allows_zero_cooldown_bars() -> None:
+    config = _base_config()
+    reentry = _section(config, "reentry")
+    reentry["allow"] = True
+    reentry["cooldown_bars"] = 0
+    config["reentry"] = reentry
+
+    result = StrategyValidator().validate(config, strict=False)
+
+    assert result["valid"] is True
+    assert _issues(result, "errors") == []

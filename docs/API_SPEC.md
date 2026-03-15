@@ -36,6 +36,7 @@
 - GET /api/v1/sessions/{sessionId}
 - POST /api/v1/sessions/{sessionId}/stop
 - POST /api/v1/sessions/{sessionId}/kill
+- POST /api/v1/sessions/{sessionId}/reevaluate
 - GET /api/v1/sessions/{sessionId}/positions
 - GET /api/v1/sessions/{sessionId}/orders
 - GET /api/v1/sessions/{sessionId}/signals

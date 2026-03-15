@@ -570,3 +570,76 @@
   - documentation-only consistency fix; no runtime behavior changed
 - next work:
   - run the updated document chain against the next real frontend or persistence task and refine any remaining ambiguous ownership boundaries
+
+## 2026-03-14 00:00:00 +09:00
+- changed files:
+  - CHANGELOG_AGENT.md
+  - MONITORING_SCREEN_SPEC.md
+  - UI_IA.md
+  - frontend/src/features/logs/api.ts
+  - frontend/src/features/sessions/api.ts
+  - frontend/src/pages/MonitoringPage.tsx
+- change type: monitoring live-refresh and layout behavior update
+- summary:
+  - enabled 2-second live refresh for monitoring session resources used by pnl and detail tables
+  - removed the session-detail `Position` tab and kept the right-side detail surface focused on logs, explain, signals, orders, and risk
+  - applied the dashboard-style animated row-enter behavior to newly added monitoring detail rows
+  - updated monitoring documentation to match the current implemented layout and live behavior
+- reason:
+  - align the monitoring screen with the approved `strategy -> session -> pnl` hierarchy while making pnl and detail data feel live during active sessions
+- impact:
+  - monitoring screen responsiveness
+  - session detail readability
+  - document-to-implementation traceability
+- next work:
+  - replace polling with session-specific websocket streams if per-session live feeds are introduced later
+
+## 2026-03-14 00:34:22 +09:00
+- changed files:
+  - CHANGELOG_AGENT.md
+  - API_PAYLOADS.md
+  - MONITORING_SCREEN_SPEC.md
+  - UI_IA.md
+  - backend/app/api/ws_router.py
+  - backend/app/application/services/stream_service.py
+  - backend/tests/test_ws_router.py
+  - frontend/src/features/monitoring/useActiveSymbolPrices.ts
+  - frontend/src/pages/MonitoringPage.tsx
+- change type: monitoring pnl live-price websocket update
+- summary:
+  - added `WS /ws/prices` so the frontend can subscribe to the selected session's active symbol set
+  - switched monitoring `PnL` rows to derive from session position snapshots plus live symbol prices instead of relying only on polled `unrealized_pnl`
+  - kept session-detail tables on the existing 2-second refresh path so fills, signals, orders, and risk events still update without changing the approved UI
+  - documented the new websocket contract and the monitoring data-flow split
+- reason:
+  - align the monitoring pnl behavior with the intended model of fixed position state plus real-time current prices
+- impact:
+  - monitoring pnl responsiveness
+  - websocket coverage for active-symbol prices
+  - document-to-implementation traceability
+- next work:
+  - move session-detail tables from polling to websocket deltas if the backend later exposes per-session event streams
+
+## 2026-03-14 00:56:17 +09:00
+- changed files:
+  - CHANGELOG_AGENT.md
+  - MONITORING_SCREEN_SPEC.md
+  - UI_IA.md
+  - frontend/.env.local
+  - frontend/src/features/logs/api.ts
+  - frontend/src/features/sessions/api.ts
+  - frontend/src/pages/MonitoringPage.tsx
+- change type: monitoring local websocket recovery and polling-load reduction
+- summary:
+  - pointed the local frontend dev environment at the healthy backend instance on port `8014`
+  - reduced monitoring query pressure by polling only the active session-detail tab every 2 seconds instead of polling every detail source continuously
+  - slowed session list/header refresh and separated position refresh cadence from detail-table refresh
+  - updated monitoring docs to match the lighter polling model
+- reason:
+  - the browser websocket failures were caused by the local backend instance stalling under monitoring data load, which prevented `ws/monitoring` and `ws/prices` handshakes from completing
+- impact:
+  - local monitoring stability
+  - lower backend query pressure
+  - clearer distinction between live-price updates and detail polling
+- next work:
+  - investigate backend-side contention under live runtime load so the local port `8012` path can be restored without relying on the temporary `8014` override

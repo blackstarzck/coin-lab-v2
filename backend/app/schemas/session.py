@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from .strategy import ExplainPayload
+
 
 class SessionCreate(BaseModel):
     mode: Literal["BACKTEST", "PAPER", "LIVE"]
@@ -37,11 +39,23 @@ class SessionKillRequest(BaseModel):
     close_open_positions: bool = True
 
 
+class SessionReevaluateRequest(BaseModel):
+    symbols: list[str] = Field(default_factory=list)
+
+
 class SessionStopResponse(BaseModel):
     session_id: str
     previous_status: Literal["PENDING", "RUNNING", "STOPPING", "STOPPED", "FAILED"]
     current_status: Literal["PENDING", "RUNNING", "STOPPING", "STOPPED", "FAILED"]
     reason: str
+
+
+class SessionReevaluateResponse(BaseModel):
+    accepted: bool
+    session_id: str
+    requested_symbols: list[str]
+    evaluated_symbols: list[str]
+    skipped: list[dict[str, object]] = Field(default_factory=list)
 
 
 class SignalResponse(BaseModel):
@@ -55,6 +69,7 @@ class SignalResponse(BaseModel):
     reason_codes: list[str]
     snapshot_time: datetime
     blocked: bool
+    explain_payload: ExplainPayload | None = None
 
 
 class PositionResponse(BaseModel):

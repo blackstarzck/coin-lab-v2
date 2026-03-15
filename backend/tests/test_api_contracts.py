@@ -5,6 +5,7 @@ from datetime import datetime
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.schemas.session import SessionCreate
 
 client = TestClient(app)
 
@@ -112,6 +113,40 @@ def test_tc_api_004_session_create_uses_single_strategy_version_id() -> None:
     assert data["strategy_version_id"] == "stv_001"
     assert data["mode"] == "PAPER"
     assert data["status"] in {"PENDING", "RUNNING"}
+
+
+def test_tc_api_004c_session_manual_reevaluate_response_shape(client: TestClient, container, monkeypatch) -> None:
+    session = container.session_service.create_session(
+        SessionCreate(
+            mode="PAPER",
+            strategy_version_id="stv_001",
+            symbol_scope={"symbols": ["KRW-BTC"]},
+        )
+    )
+    monkeypatch.setattr(
+        container.runtime_service,
+        "manual_reevaluate_session",
+        lambda current_session, symbols=None: {
+            "accepted": True,
+            "session_id": current_session.id,
+            "requested_symbols": symbols or ["KRW-BTC"],
+            "evaluated_symbols": ["KRW-BTC"],
+            "skipped": [],
+        },
+    )
+
+    response = client.post(f"/api/v1/sessions/{session.id}/reevaluate", json={"symbols": ["KRW-BTC"]})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    _assert_trace_and_timestamp(body)
+    data = body["data"]
+    assert data["accepted"] is True
+    assert data["session_id"] == session.id
+    assert data["requested_symbols"] == ["KRW-BTC"]
+    assert data["evaluated_symbols"] == ["KRW-BTC"]
+    assert data["skipped"] == []
 
 
 def test_tc_api_005_universe_catalog_response_shape(client: TestClient, container, monkeypatch) -> None:

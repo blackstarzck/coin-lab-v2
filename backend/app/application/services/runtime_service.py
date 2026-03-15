@@ -12,7 +12,7 @@ import websockets
 from app.core import error_codes
 from app.core.config import Settings
 from app.core.logging import get_logger
-from app.domain.entities.market import ConnectionState, NormalizedEvent
+from app.domain.entities.market import ConnectionState, EvaluationTrigger, MarketSnapshot, NormalizedEvent
 from app.domain.entities.session import (
     Order,
     OrderRole,
@@ -108,6 +108,102 @@ class RuntimeService:
         self.stream_service.set_runtime_state(ConnectionState.DISCONNECTED.value, self._reconnect_count_1h)
         return {"accepted": True, "status": "stopped"}
 
+    def manual_reevaluate_session(self, session: Session, symbols: list[str] | None = None) -> dict[str, object]:
+        requested_symbols = [symbol for symbol in (symbols or []) if symbol]
+        active_symbols = [
+            str(symbol)
+            for symbol in session.symbol_scope_json.get("active_symbols", [])
+            if isinstance(symbol, str)
+        ]
+        target_symbols = requested_symbols or active_symbols
+        target_symbols = [symbol for symbol in target_symbols if symbol in active_symbols]
+
+        if session.status != SessionStatus.RUNNING:
+            return {
+                "accepted": False,
+                "session_id": session.id,
+                "requested_symbols": target_symbols,
+                "evaluated_symbols": [],
+                "skipped": [
+                    {
+                        "symbol": None,
+                        "reason_code": "SESSION_NOT_RUNNING",
+                        "reason_detail": f"session status is {session.status.value}",
+                    }
+                ],
+            }
+
+        self._sync_session_runtime_state(session)
+        evaluated_symbols: list[str] = []
+        skipped: list[dict[str, object]] = []
+
+        for symbol in target_symbols:
+            snapshot = self.market_ingest_service.build_manual_snapshot(symbol)
+            if snapshot is None:
+                skipped.append(
+                    {
+                        "symbol": symbol,
+                        "reason_code": error_codes.DATA_REQUIRED_TIMEFRAME_MISSING,
+                        "reason_detail": "no market snapshot is available for the symbol",
+                    }
+                )
+                continue
+
+            self.stream_service.record_snapshot(snapshot)
+            skip_reason = self._evaluation_skip_reason(session, snapshot, EvaluationTrigger.ON_MANUAL_REEVALUATE)
+            if skip_reason is not None:
+                reason_code, reason_detail = skip_reason
+                skipped.append({"symbol": symbol, "reason_code": reason_code, "reason_detail": reason_detail})
+                self._append_strategy_log(
+                    session=session,
+                    snapshot=snapshot,
+                    level="WARNING",
+                    event_type="EVALUATION_SKIPPED",
+                    message="전략 평가를 건너뛰었습니다",
+                    payload={
+                        **self._evaluation_payload(EvaluationTrigger.ON_MANUAL_REEVALUATE, snapshot),
+                        "reason_code": reason_code,
+                        "reason_detail": reason_detail,
+                    },
+                )
+            else:
+                self._append_strategy_log(
+                    session=session,
+                    snapshot=snapshot,
+                    level="INFO",
+                    event_type="EVALUATION_STARTED",
+                    message="전략 평가를 시작했습니다",
+                    payload=self._evaluation_payload(EvaluationTrigger.ON_MANUAL_REEVALUATE, snapshot),
+                )
+                result = self.execution_service.process_snapshot(session, session.config_snapshot, snapshot)
+                self._persist_execution_result(session, snapshot, result)
+                self._append_strategy_log(
+                    session=session,
+                    snapshot=snapshot,
+                    level="INFO",
+                    event_type="EVALUATION_COMPLETED",
+                    message="전략 평가가 완료되었습니다",
+                    payload={
+                        **self._evaluation_payload(EvaluationTrigger.ON_MANUAL_REEVALUATE, snapshot),
+                        **self._evaluation_result_payload(result),
+                    },
+                )
+                evaluated_symbols.append(symbol)
+
+            self._refresh_open_positions(session, symbol, snapshot.latest_price)
+            if self._should_refresh_session_state(session.id, snapshot.snapshot_time):
+                self._update_session_health(session, snapshot)
+                self._recalculate_performance(session)
+
+        self.stream_service.publish_monitoring_snapshot(force=True)
+        return {
+            "accepted": len(evaluated_symbols) > 0,
+            "session_id": session.id,
+            "requested_symbols": target_symbols,
+            "evaluated_symbols": evaluated_symbols,
+            "skipped": skipped,
+        }
+
     def _start_worker_if_needed(self) -> None:
         if self._thread is not None and self._thread.is_alive():
             return
@@ -129,10 +225,11 @@ class RuntimeService:
 
     def ingest_normalized_event(self, event: NormalizedEvent) -> dict[str, object]:
         result = self.market_ingest_service.process_event(event)
-        snapshot = self.market_ingest_service.snapshots.get(event.symbol)
-        if snapshot is not None:
+        snapshot = result.get("snapshot")
+        evaluation_snapshot = result.get("evaluation_snapshot")
+        if isinstance(snapshot, MarketSnapshot):
             self.stream_service.record_snapshot(snapshot)
-            self._evaluate_sessions_for_snapshot(snapshot)
+            self._evaluate_sessions_for_snapshot(snapshot, evaluation_snapshot)
             self.stream_service.publish_monitoring_snapshot()
 
         if not bool(result.get("accepted", False)):
@@ -229,7 +326,11 @@ class RuntimeService:
                 symbols.update(str(symbol) for symbol in active_symbols if isinstance(symbol, str))
         return tuple(sorted(symbols))
 
-    def _evaluate_sessions_for_snapshot(self, snapshot: Any) -> None:
+    def _evaluate_sessions_for_snapshot(
+        self,
+        snapshot: MarketSnapshot,
+        evaluation_snapshot: MarketSnapshot | None,
+    ) -> None:
         for session in self.store.list_sessions():
             if session.status != SessionStatus.RUNNING:
                 continue
@@ -237,9 +338,47 @@ class RuntimeService:
             if snapshot.symbol not in active_symbols:
                 continue
             self._sync_session_runtime_state(session)
-            if self._should_evaluate_session(session, snapshot):
-                result = self.execution_service.process_snapshot(session, session.config_snapshot, snapshot)
-                self._persist_execution_result(session, snapshot, result)
+            trigger = self._resolve_session_trigger(session)
+            selected_snapshot = self._candidate_snapshot_for_trigger(session, snapshot, evaluation_snapshot, trigger)
+            if selected_snapshot is not None:
+                skip_reason = self._evaluation_skip_reason(session, selected_snapshot, trigger)
+                if skip_reason is not None:
+                    reason_code, reason_detail = skip_reason
+                    self._append_strategy_log(
+                        session=session,
+                        snapshot=selected_snapshot,
+                        level="WARNING",
+                        event_type="EVALUATION_SKIPPED",
+                        message="전략 평가를 건너뛰었습니다",
+                        payload={
+                            **self._evaluation_payload(trigger, selected_snapshot),
+                            "reason_code": reason_code,
+                            "reason_detail": reason_detail,
+                        },
+                    )
+                else:
+                    self._mark_evaluation_marker(session, selected_snapshot, trigger)
+                    self._append_strategy_log(
+                        session=session,
+                        snapshot=selected_snapshot,
+                        level="INFO",
+                        event_type="EVALUATION_STARTED",
+                        message="전략 평가를 시작했습니다",
+                        payload=self._evaluation_payload(trigger, selected_snapshot),
+                    )
+                    result = self.execution_service.process_snapshot(session, session.config_snapshot, selected_snapshot)
+                    self._persist_execution_result(session, selected_snapshot, result)
+                    self._append_strategy_log(
+                        session=session,
+                        snapshot=selected_snapshot,
+                        level="INFO",
+                        event_type="EVALUATION_COMPLETED",
+                        message="전략 평가가 완료되었습니다",
+                        payload={
+                            **self._evaluation_payload(trigger, selected_snapshot),
+                            **self._evaluation_result_payload(result),
+                        },
+                    )
             self._refresh_open_positions(session, snapshot.symbol, snapshot.latest_price)
             if self._should_refresh_session_state(session.id, snapshot.snapshot_time):
                 self._update_session_health(session, snapshot)
@@ -250,25 +389,19 @@ class RuntimeService:
         if isinstance(signal, Signal):
             if self._should_persist_signal(signal):
                 self.store.create_signal(signal)
-                self.store.append_log(
-                    LogEntry(
-                        id=f"log_{uuid4().hex[:12]}",
-                        channel="strategy-execution",
-                        level="INFO",
-                        event_type="SIGNAL_EVALUATED",
-                        message="전략 신호를 평가했습니다",
-                        payload={
-                            "symbol": signal.symbol,
-                            "reason_codes": signal.reason_codes,
-                            "blocked": signal.blocked,
-                        },
-                        logged_at=datetime.now(UTC),
-                        session_id=session.id,
-                        strategy_version_id=session.strategy_version_id,
-                        symbol=signal.symbol,
-                        trace_id=session.trace_id,
-                        mode=session.mode.value,
-                    )
+                self._append_strategy_log(
+                    session=session,
+                    snapshot=snapshot,
+                    level="INFO",
+                    event_type="SIGNAL_EMITTED",
+                    message="진입 신호가 생성되었습니다",
+                    payload={
+                        "symbol": signal.symbol,
+                        "reason_codes": signal.reason_codes,
+                        "blocked": signal.blocked,
+                        "signal_price": signal.signal_price,
+                        "snapshot_time": signal.snapshot_time.isoformat(),
+                    },
                 )
 
         risk_result = result.get("risk")
@@ -288,45 +421,32 @@ class RuntimeService:
                         created_at=datetime.now(UTC),
                     )
                     self.store.create_risk_event(event)
-                    self.store.append_log(
-                        LogEntry(
-                            id=f"log_{uuid4().hex[:12]}",
-                            channel="risk-control",
-                            level="WARNING",
-                            event_type="SIGNAL_BLOCKED",
-                            message=event.message,
-                            payload=event.payload_preview,
-                            logged_at=event.created_at,
-                            session_id=session.id,
-                            strategy_version_id=session.strategy_version_id,
-                            symbol=snapshot.symbol,
-                            trace_id=session.trace_id,
-                            mode=session.mode.value,
-                        )
+                    self._append_log(
+                        channel="risk-control",
+                        session=session,
+                        symbol=snapshot.symbol,
+                        level="WARNING",
+                        event_type="SIGNAL_BLOCKED",
+                        message=event.message,
+                        payload=event.payload_preview,
+                        logged_at=event.created_at,
                     )
 
         order = result.get("order")
         if isinstance(order, Order):
             self.store.create_order(order)
-            self.store.append_log(
-                LogEntry(
-                    id=f"log_{uuid4().hex[:12]}",
-                    channel="order-simulation",
-                    level="INFO",
-                    event_type="ORDER_FILLED" if order.order_state == OrderState.FILLED else "ORDER_CREATED",
-                    message=f"{order.order_role} 주문 상태: {order.order_state.value.lower()}",
-                    payload={
-                        "requested_qty": order.requested_qty,
-                        "executed_qty": order.executed_qty,
-                        "executed_price": order.executed_price,
-                    },
-                    logged_at=datetime.now(UTC),
-                    session_id=session.id,
-                    strategy_version_id=session.strategy_version_id,
-                    symbol=order.symbol,
-                    trace_id=session.trace_id,
-                    mode=session.mode.value,
-                )
+            self._append_log(
+                channel="order-simulation",
+                session=session,
+                symbol=order.symbol,
+                level="INFO",
+                event_type="ORDER_FILLED" if order.order_state == OrderState.FILLED else "ORDER_CREATED",
+                message=f"{order.order_role} 주문 상태: {order.order_state.value.lower()}",
+                payload={
+                    "requested_qty": order.requested_qty,
+                    "executed_qty": order.executed_qty,
+                    "executed_price": order.executed_price,
+                },
             )
 
         position = result.get("position")
@@ -338,9 +458,26 @@ class RuntimeService:
             for exit_result in exits:
                 if not isinstance(exit_result, dict):
                     continue
+                exit_signal = exit_result.get("signal")
                 exit_position = exit_result.get("position")
                 fill = exit_result.get("fill")
                 exit_reason = str(exit_result.get("exit_reason", "STRATEGY_EXIT"))
+                if isinstance(exit_signal, Signal) and self._should_persist_signal(exit_signal):
+                    self.store.create_signal(exit_signal)
+                    self._append_strategy_log(
+                        session=session,
+                        snapshot=snapshot,
+                        level="INFO",
+                        event_type="SIGNAL_EMITTED",
+                        message="청산 신호가 생성되었습니다",
+                        payload={
+                            "symbol": exit_signal.symbol,
+                            "reason_codes": exit_signal.reason_codes,
+                            "blocked": exit_signal.blocked,
+                            "signal_price": exit_signal.signal_price,
+                            "snapshot_time": exit_signal.snapshot_time.isoformat(),
+                        },
+                    )
                 if isinstance(exit_position, Position):
                     self._save_position(exit_position)
                     exit_order = Order(
@@ -360,21 +497,14 @@ class RuntimeService:
                         filled_at=datetime.now(UTC),
                     )
                     self.store.create_order(exit_order)
-                    self.store.append_log(
-                        LogEntry(
-                            id=f"log_{uuid4().hex[:12]}",
-                            channel="order-simulation",
-                            level="INFO",
-                            event_type="EXIT_FILLED",
-                            message=f"{exit_reason} 사유로 청산이 체결되었습니다",
-                            payload={"exit_reason": exit_reason},
-                            logged_at=datetime.now(UTC),
-                            session_id=session.id,
-                            strategy_version_id=session.strategy_version_id,
-                            symbol=exit_position.symbol,
-                            trace_id=session.trace_id,
-                            mode=session.mode.value,
-                        )
+                    self._append_log(
+                        channel="order-simulation",
+                        session=session,
+                        symbol=exit_position.symbol,
+                        level="INFO",
+                        event_type="EXIT_FILLED",
+                        message=f"{exit_reason} 사유로 청산이 체결되었습니다",
+                        payload={"exit_reason": exit_reason},
                     )
                     self._record_realized_pnl(session, exit_position, getattr(fill, "fill_price", None))
 
@@ -467,6 +597,96 @@ class RuntimeService:
         session.updated_at = datetime.now(UTC)
         self.store.update_session(session)
 
+    def _append_strategy_log(
+        self,
+        *,
+        session: Session,
+        snapshot: MarketSnapshot,
+        level: str,
+        event_type: str,
+        message: str,
+        payload: dict[str, object],
+    ) -> None:
+        self._append_log(
+            channel="strategy-execution",
+            session=session,
+            symbol=snapshot.symbol,
+            level=level,
+            event_type=event_type,
+            message=message,
+            payload=payload,
+        )
+
+    def _append_log(
+        self,
+        *,
+        channel: str,
+        session: Session,
+        symbol: str,
+        level: str,
+        event_type: str,
+        message: str,
+        payload: dict[str, object],
+        logged_at: datetime | None = None,
+    ) -> None:
+        self.store.append_log(
+            LogEntry(
+                id=f"log_{uuid4().hex[:12]}",
+                channel=channel,
+                level=level,
+                event_type=event_type,
+                message=message,
+                payload=payload,
+                logged_at=logged_at or datetime.now(UTC),
+                session_id=session.id,
+                strategy_version_id=session.strategy_version_id,
+                symbol=symbol,
+                trace_id=session.trace_id,
+                mode=session.mode.value,
+            )
+        )
+
+    def _evaluation_payload(self, trigger: EvaluationTrigger, snapshot: MarketSnapshot) -> dict[str, object]:
+        return {
+            "trigger": trigger.value,
+            "snapshot_time": snapshot.snapshot_time.isoformat(),
+            "source_event_type": snapshot.source_event_type.value if snapshot.source_event_type is not None else None,
+            "source_trace_ids": list(snapshot.trigger_trace_ids),
+            "closed_timeframes": list(snapshot.closed_timeframes),
+            "updated_timeframes": list(snapshot.updated_timeframes),
+        }
+
+    def _evaluation_result_payload(self, result: dict[str, object]) -> dict[str, object]:
+        signal = result.get("signal")
+        risk_result = result.get("risk")
+        blocked_codes = list(getattr(risk_result, "blocked_codes", [])) if risk_result is not None else []
+        reason_codes_raw = result.get("reason_codes")
+        reason_codes = list(reason_codes_raw) if isinstance(reason_codes_raw, list) else []
+
+        decision = "NO_SIGNAL"
+        if isinstance(signal, Signal):
+            decision = "SIGNAL_EMITTED"
+            if signal.action == "EXIT":
+                decision = "EXIT_SIGNAL_EMITTED"
+            if signal.blocked:
+                decision = "SIGNAL_DEDUPED"
+            elif blocked_codes:
+                decision = "RISK_BLOCKED"
+            elif not bool(result.get("accepted", False)):
+                decision = "EXECUTION_REJECTED"
+            elif isinstance(result.get("order"), Order):
+                decision = "ORDER_FLOW_STARTED"
+            elif isinstance(result.get("exits"), list) and signal.action == "EXIT":
+                decision = "EXIT_FLOW_STARTED"
+
+        return {
+            "decision": decision,
+            "accepted": bool(result.get("accepted", False)),
+            "signal_state": result.get("signal_state"),
+            "reason_codes": reason_codes,
+            "blocked_codes": blocked_codes,
+        }
+
     def _mark_late_events(self, symbol: str) -> None:
         for session in self.store.list_sessions():
             if session.status != SessionStatus.RUNNING:
@@ -488,24 +708,118 @@ class RuntimeService:
         if changed:
             self.stream_service.publish_monitoring_snapshot(force=True)
 
-    def _should_evaluate_session(self, session: Session, snapshot: Any) -> bool:
+    def _resolve_session_trigger(self, session: Session) -> EvaluationTrigger:
         market_cfg = session.config_snapshot.get("market")
         market = market_cfg if isinstance(market_cfg, dict) else {}
-        trade_basis = str(market.get("trade_basis", "candle")).lower()
+        configured = market.get("trigger") or market.get("evaluation_trigger")
+        if isinstance(configured, str):
+            try:
+                return EvaluationTrigger(configured.upper())
+            except ValueError:
+                pass
+        return EvaluationTrigger.ON_CANDLE_CLOSE
+
+    def _primary_timeframe(self, session: Session) -> str:
+        market_cfg = session.config_snapshot.get("market")
+        market = market_cfg if isinstance(market_cfg, dict) else {}
         timeframes = market.get("timeframes") if isinstance(market.get("timeframes"), list) else []
-        primary_timeframe = str(timeframes[0]) if timeframes else "1m"
+        return str(timeframes[0]) if timeframes else "1m"
 
-        if trade_basis == "candle":
+    def _candidate_snapshot_for_trigger(
+        self,
+        session: Session,
+        snapshot: MarketSnapshot,
+        evaluation_snapshot: MarketSnapshot | None,
+        trigger: EvaluationTrigger,
+    ) -> MarketSnapshot | None:
+        primary_timeframe = self._primary_timeframe(session)
+
+        if trigger == EvaluationTrigger.ON_CANDLE_CLOSE:
+            if evaluation_snapshot is None or primary_timeframe not in evaluation_snapshot.closed_timeframes:
+                return None
+            return evaluation_snapshot
+
+        if trigger == EvaluationTrigger.ON_CANDLE_UPDATE:
+            if trigger not in snapshot.available_triggers or primary_timeframe not in snapshot.updated_timeframes:
+                return None
+            return snapshot
+
+        if trigger == EvaluationTrigger.ON_TICK_BATCH:
+            if trigger not in snapshot.available_triggers:
+                return None
+            return snapshot
+
+        return None
+
+    def _evaluation_skip_reason(
+        self,
+        session: Session,
+        snapshot: MarketSnapshot,
+        trigger: EvaluationTrigger,
+    ) -> tuple[str, str] | None:
+        if snapshot.connection_state == ConnectionState.DEGRADED:
+            return (error_codes.DATA_SYMBOL_DEGRADED, "runtime connection is degraded")
+
+        if self._is_snapshot_stale_for_session(session, snapshot, trigger):
+            return (error_codes.EXEC_SNAPSHOT_STALE, "snapshot freshness threshold exceeded")
+
+        if trigger != EvaluationTrigger.ON_MANUAL_REEVALUATE and self._has_evaluation_marker(session, snapshot, trigger):
+            return ("TRIGGER_COALESCED", "newer evaluation already exists for the same evaluation window")
+
+        return None
+
+    def _has_evaluation_marker(
+        self,
+        session: Session,
+        snapshot: MarketSnapshot,
+        trigger: EvaluationTrigger,
+    ) -> bool:
+        marker = self._evaluation_marker(session, snapshot, trigger)
+        key = self._evaluation_marker_key(session, snapshot, trigger)
+        return self._last_evaluation_markers.get(key) == marker
+
+    def _mark_evaluation_marker(
+        self,
+        session: Session,
+        snapshot: MarketSnapshot,
+        trigger: EvaluationTrigger,
+    ) -> None:
+        key = self._evaluation_marker_key(session, snapshot, trigger)
+        self._last_evaluation_markers[key] = self._evaluation_marker(session, snapshot, trigger)
+
+    def _evaluation_marker_key(
+        self,
+        session: Session,
+        snapshot: MarketSnapshot,
+        trigger: EvaluationTrigger,
+    ) -> str:
+        primary_timeframe = self._primary_timeframe(session)
+        return f"{session.id}:{snapshot.symbol}:{primary_timeframe}:{trigger.value}"
+
+    def _evaluation_marker(
+        self,
+        session: Session,
+        snapshot: MarketSnapshot,
+        trigger: EvaluationTrigger,
+    ) -> str:
+        primary_timeframe = self._primary_timeframe(session)
+        if trigger == EvaluationTrigger.ON_CANDLE_CLOSE:
             candle = snapshot.candles.get(primary_timeframe)
-            marker = candle.candle_start.isoformat() if candle is not None else snapshot.snapshot_time.replace(second=0, microsecond=0).isoformat()
+            if candle is None:
+                return snapshot.snapshot_time.isoformat()
+            marker = candle.candle_start.isoformat()
         else:
-            marker = snapshot.snapshot_time.replace(microsecond=0).isoformat()
+            marker = snapshot.snapshot_time.isoformat()
+        return marker
 
-        key = f"{session.id}:{snapshot.symbol}:{primary_timeframe}:{trade_basis}"
-        if self._last_evaluation_markers.get(key) == marker:
-            return False
-        self._last_evaluation_markers[key] = marker
-        return True
+    def _is_snapshot_stale_for_session(
+        self,
+        session: Session,
+        snapshot: MarketSnapshot,
+        trigger: EvaluationTrigger,
+    ) -> bool:
+        basis = "tick" if trigger == EvaluationTrigger.ON_TICK_BATCH else self._primary_timeframe(session)
+        return self.market_ingest_service.is_snapshot_stale(snapshot.snapshot_time, basis)
 
     def _should_refresh_session_state(self, session_id: str, snapshot_time: datetime) -> bool:
         last_refresh_at = self._last_session_refresh_at.get(session_id)

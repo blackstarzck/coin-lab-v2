@@ -73,12 +73,12 @@ flowchart LR
 | `/api/v1/sessions` | REST | Monitoring page | Monitoring | Builds session list and decides active session |
 | `/api/v1/sessions/{id}` | REST | Monitoring page | Monitoring | Fills selected session header and top status |
 | `/api/v1/sessions/{id}/positions` | REST | Monitoring page | Monitoring | Drives position table and symbol PnL rows |
-| `/api/v1/sessions/{id}/signals` | REST | Monitoring page | Monitoring | Drives signal tabs and strategy explanation cards |
-| `/api/v1/sessions/{id}/orders` | REST | Monitoring page | Monitoring | Drives order tab |
-| `/api/v1/sessions/{id}/risk-events` | REST | Monitoring page | Monitoring | Drives risk event tab |
+| `/api/v1/sessions/{id}/signals` | REST | Monitoring page | Monitoring | Drives the merged signal/order tab and selected strategy explain detail |
+| `/api/v1/sessions/{id}/orders` | REST | Monitoring page | Monitoring | Supplies execution results inside the merged signal/order tab |
+| `/api/v1/sessions/{id}/risk-events` | REST | Monitoring page | Monitoring | Drives risk tab and explains blocked rows in the merged signal/order tab |
 | `/api/v1/logs/strategy-execution` | REST | Monitoring page | Monitoring | Drives event log tab |
 | `/ws/charts/{symbol}` | WebSocket | Monitoring page | Monitoring | Updates the center chart for the active symbol only |
-| `/ws/prices?symbols=...` | WebSocket | Monitoring page | Monitoring | Updates live prices and symbol PnL rows |
+| `/ws/prices?symbols=...` | WebSocket | Monitoring page | Monitoring | Updates live prices, symbol PnL rows, and recent buy/sell entry-rate badges |
 | `/ws/backtests/{run_id}` | WebSocket | Backtests flow | Backtests | Streams backtest progress only |
 
 ## Scenario 1: Dashboard Landing
@@ -141,8 +141,8 @@ sequenceDiagram
     P->>WS2: Open chart websocket for active symbol
     P->>WS3: Open price websocket for active symbols
     WS2-->>Q: chart updates
-    WS3-->>Q: price updates
-    Q-->>P: tables, chart, and badges refresh
+    WS3-->>Q: price and entry-rate updates
+    Q-->>P: tables, chart header, and badges refresh
 ```
 
 ### What Depends On What
@@ -150,6 +150,8 @@ sequenceDiagram
 - The active session must exist before detail requests can run.
 - Active symbols come from the selected session.
 - The active symbol must exist before the chart websocket opens.
+- The merged `신호·주문` tab needs `signals`, `orders`, and `risk-events` together to explain whether a signal filled, was blocked, or has no linked order.
+- `/ws/prices` now carries both the latest trade price and a rolling one-minute buy/sell entry-rate snapshot per symbol.
 
 ### UI Impact
 This page combines:
@@ -158,6 +160,9 @@ This page combines:
 - tab-specific detail
 - chart realtime data
 - live prices
+- symbol-level buy/sell entry-rate snapshots derived from recent trade flow
+- signal selection state for `Strategy Explain`
+- a merged `신호·주문` timeline that joins signals with downstream orders and risk blocks
 
 Because of that, a bug here can look like:
 - empty chart
@@ -165,6 +170,7 @@ Because of that, a bug here can look like:
 - stale session header
 - log tab showing no data
 - repeated websocket reconnects
+- `Strategy Explain` showing the wrong signal after a row click or chart marker click
 
 ## Scenario 3: Selecting a Symbol on the Monitoring Page
 Selecting a symbol changes the focus inside the current session. It is not a full system-wide change.
@@ -187,13 +193,21 @@ sequenceDiagram
 Usually changes:
 - center chart
 - selected symbol highlight
-- live price and PnL rows related to that symbol
+- live price, entry-rate, and PnL rows related to that symbol
 
 Usually does not change:
 - running session count
 - dashboard summary cards
 - session status
 - strategy group selection
+
+### Marker Click Note
+Signal markers on the chart do not open a new network connection.
+
+Current behavior:
+- marker rendering uses the already-fetched `/api/v1/sessions/{id}/signals` result
+- clicking a marker updates local selected-signal state only
+- the right-side `Strategy Explain` tab opens for that selected signal
 
 ### Maintenance Note
 If symbol selection starts changing global summary data, document that explicitly. That would be a behavior shift.

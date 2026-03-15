@@ -5,7 +5,7 @@ import path from 'path'
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, __dirname, '')
-  const proxyTarget = env.VITE_PROXY_TARGET || 'http://127.0.0.1:8012'
+  const proxyTarget = env.VITE_PROXY_TARGET || 'http://localhost:8012'
   const proxyWsTarget = proxyTarget.replace(/^http/i, 'ws')
 
   return {

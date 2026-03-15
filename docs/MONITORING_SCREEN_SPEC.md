@@ -223,7 +223,7 @@
 
 ## 8.3 차트 interaction
 - crosshair hover 시 우측 패널 값 동기화
-- marker 클릭 시 하단 `Strategy Explain` 탭 이동
+- marker 클릭 시 해당 signal을 selected signal로 설정하고 하단 `Strategy Explain` 탭으로 이동
 - order line 클릭 시 하단 `Order Timeline` 탭 이동
 
 ---
@@ -331,6 +331,7 @@
 - matched conditions
 - failed conditions
 - facts/value table
+- parameters table
 - blocked reason
 - raw explain json
 
@@ -438,6 +439,21 @@
 - `/api/v1/sessions/{sessionId}/risk-events`
 - `WS /ws/monitoring`
 - `WS /ws/charts/{symbol}`
+- `WS /ws/prices?symbols=KRW-BTC,KRW-ETH`
+
+### Implementation Addendum (2026-03-14)
+- Left column: `Strategy -> Session -> PnL` stacked tables
+- Center column: chart workspace
+- Right column: `Session Detail` tabs
+- Session detail tabs: `Event Log / Strategy Explain / Signals / Orders / Risk`
+- The old `Position` detail tab is removed.
+- Monitoring page PnL rows now derive from session position snapshots plus `WS /ws/prices` live symbol prices.
+- The active session-detail tab polls every 2 seconds for live updates.
+- Session header/session-list refresh uses a slower cadence than detail polling, and position snapshots refresh separately for live PnL support.
+- Monitoring summary still accepts websocket-driven cache updates through `WS /ws/monitoring`.
+- Newly inserted rows in `Event Log`, `Signals`, `Orders`, and `Risk` reuse the same animated table-row enter behavior as the dashboard.
+- `Signals` rows act as the selector for the `Strategy Explain` detail view in the monitoring screen.
+- Chart signal markers and `Signals` rows both update the same selected-signal state used by `Strategy Explain`.
 
 ---
 

@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useState } from 'react'
+import { createContext, createElement, type ReactNode, startTransition, useContext, useEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { env } from '@/shared/config/env'
 import { monitoringKeys, type MonitoringSummary } from './api'
@@ -18,6 +18,14 @@ interface MonitoringHeartbeatMessage {
 
 type MonitoringStreamMessage = MonitoringSnapshotMessage | MonitoringHeartbeatMessage
 
+interface MonitoringSummaryStreamContextValue {
+  isConnected: boolean
+}
+
+const MonitoringSummaryStreamContext = createContext<MonitoringSummaryStreamContextValue>({
+  isConnected: false,
+})
+
 function toMonitoringWebSocketUrl(baseUrl: string): string {
   const resolvedBaseUrl = baseUrl || window.location.origin
   const url = new URL(resolvedBaseUrl)
@@ -26,7 +34,7 @@ function toMonitoringWebSocketUrl(baseUrl: string): string {
   return url.toString()
 }
 
-export function useMonitoringSummaryStream() {
+export function MonitoringSummaryStreamProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient()
   const [isConnected, setIsConnected] = useState(false)
 
@@ -113,5 +121,13 @@ export function useMonitoringSummaryStream() {
     }
   }, [queryClient])
 
-  return { isConnected }
+  return createElement(
+    MonitoringSummaryStreamContext.Provider,
+    { value: { isConnected } },
+    children,
+  )
+}
+
+export function useMonitoringSummaryStream() {
+  return useContext(MonitoringSummaryStreamContext)
 }

@@ -87,6 +87,17 @@ Data source:
 - 선택 세션과 현재 심볼에만 accent를 사용하고 나머지는 중립 톤으로 유지한다.
 - 상세 상호작용과 상태 표현은 `MONITORING_SCREEN_SPEC.md`를 따른다.
 
+Implementation note (2026-03-14):
+- The monitoring screen now uses a three-column layout.
+- Left column: stacked tables for `Strategy -> Session -> PnL`.
+- Center column: chart workspace.
+- Right column: `Session Detail` tabs with `Event Log / Strategy Explain / Signals / Orders / Risk`.
+- The old `Position` tab was removed from session detail.
+- PnL rows derive from session positions plus `WS /ws/prices` live prices for the session's active symbols.
+- The active session-detail tab refreshes on a 2-second interval in the monitoring screen.
+- Session list/header refresh is slower than detail polling, and position snapshots refresh separately for live PnL support.
+- New rows in the event log, signal, order, and risk tables use the same animated row-enter behavior as the dashboard.
+
 ## 3. Strategies - List
 테이블 컬럼:
 - 전략명
@@ -143,6 +154,9 @@ Data source:
 - Form + JSON 동기화
 - validation 결과 즉시 표시
 - diff preview 제공
+- 전략 생성과 전략 편집은 같은 탭 구조와 동일한 structured editor 패턴을 사용한다.
+- `Entry / Reentry / Exit`는 raw JSON만 노출하지 말고 조건 타입, indicator length, lookback, threshold 같은 parameter를 구조화 폼으로 편집할 수 있어야 한다.
+- Explain/debug payload에 노출되는 parameter 이름과 값은 편집 폼에서 설정한 항목과 대응되어야 한다.
 
 권장 컴포넌트:
 - `SectionTabs`

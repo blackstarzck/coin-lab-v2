@@ -14,12 +14,27 @@ ws_router = APIRouter()
 logger = get_logger(__name__)
 
 
+def _parse_symbols(raw_value: str | None) -> tuple[str, ...]:
+    if raw_value is None:
+        return ()
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for symbol in raw_value.split(","):
+        cleaned = symbol.strip()
+        if not cleaned or cleaned in seen:
+            continue
+        normalized.append(cleaned)
+        seen.add(cleaned)
+    return tuple(normalized)
+
+
 @ws_router.websocket("/ws/monitoring")
 async def monitoring_ws(websocket: WebSocket) -> None:
     await websocket.accept()
     trace_id = generate_trace_id()
     stream_service = get_container().stream_service
     queue = stream_service.register_monitoring_subscriber()
+    logger.info("Monitoring websocket accepted")
     try:
         try:
             await websocket.send_json(
@@ -32,7 +47,12 @@ async def monitoring_ws(websocket: WebSocket) -> None:
                 }
                 )
             )
-        except WebSocketDisconnect:
+        except WebSocketDisconnect as exc:
+            logger.info(
+                "Monitoring websocket disconnected before initial snapshot: code=%s reason=%s",
+                exc.code,
+                getattr(exc, "reason", ""),
+            )
             return
         while True:
             try:
@@ -40,7 +60,12 @@ async def monitoring_ws(websocket: WebSocket) -> None:
                 await websocket.send_json(jsonable_encoder({"trace_id": trace_id, **payload}))
             except TimeoutError:
                 await websocket.send_json({"type": "heartbeat", "trace_id": trace_id, "timestamp": utc_now_iso()})
-    except WebSocketDisconnect:
+    except WebSocketDisconnect as exc:
+        logger.info(
+            "Monitoring websocket disconnected: code=%s reason=%s",
+            exc.code,
+            getattr(exc, "reason", ""),
+        )
         return
     finally:
         stream_service.unregister_monitoring_subscriber(queue)
@@ -79,6 +104,42 @@ async def charts_ws(websocket: WebSocket, symbol: str) -> None:
         return
     finally:
         stream_service.unregister_chart_subscriber(symbol, timeframe, queue)
+
+
+@ws_router.websocket("/ws/prices")
+async def prices_ws(websocket: WebSocket) -> None:
+    await websocket.accept()
+    trace_id = generate_trace_id()
+    stream_service = get_container().stream_service
+    symbols = _parse_symbols(websocket.query_params.get("symbols"))
+    registered_symbols, queue = stream_service.register_price_subscriber(symbols)
+    logger.info("Price websocket accepted for %s", ",".join(registered_symbols) or "(empty)")
+    try:
+        await websocket.send_json(
+            jsonable_encoder(
+                {
+                    "type": "price_snapshot",
+                    "trace_id": trace_id,
+                    "symbols": stream_service.price_snapshot(registered_symbols)["symbols"],
+                }
+            )
+        )
+        while True:
+            try:
+                payload = await asyncio.wait_for(queue.get(), timeout=5.0)
+                await websocket.send_json(jsonable_encoder({"trace_id": trace_id, **payload}))
+            except TimeoutError:
+                await websocket.send_json({"type": "heartbeat", "trace_id": trace_id, "timestamp": utc_now_iso()})
+    except WebSocketDisconnect as exc:
+        logger.info(
+            "Price websocket disconnected for %s: code=%s reason=%s",
+            ",".join(registered_symbols) or "(empty)",
+            exc.code,
+            getattr(exc, "reason", ""),
+        )
+        return
+    finally:
+        stream_service.unregister_price_subscriber(registered_symbols, queue)
 
 
 @ws_router.websocket("/ws/backtests/{run_id}")

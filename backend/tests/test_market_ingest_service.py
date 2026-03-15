@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.application.services.market_ingest_service import MarketIngestService
 from app.core import error_codes
-from app.domain.entities.market import EventType, NormalizedEvent
+from app.domain.entities.market import EvaluationTrigger, EventType, NormalizedEvent
 
 
 def _event(
@@ -14,7 +14,17 @@ def _event(
     *,
     symbol: str = "KRW-BTC",
     event_type: EventType = EventType.TRADE_TICK,
+    trade_volume: float = 1.0,
+    ask_bid: str | None = None,
 ) -> NormalizedEvent:
+    payload: dict[str, object] = {
+        "trade_price": 100.0,
+        "trade_volume": trade_volume,
+        "acc_trade_volume_24h": 12.0,
+    }
+    if ask_bid is not None:
+        payload["ask_bid"] = ask_bid
+
     return NormalizedEvent(
         event_id=f"evt-{dedupe_key}-{int(received_at.timestamp() * 1000)}",
         dedupe_key=dedupe_key,
@@ -25,7 +35,7 @@ def _event(
         sequence_no=None,
         received_at=received_at,
         source="test",
-        payload={"trade_price": 100.0, "trade_volume": 1.0, "acc_trade_volume_24h": 12.0},
+        payload=payload,
         trace_id="trc_test",
     )
 
@@ -71,6 +81,56 @@ def test_tick_buffer_flush_by_size() -> None:
     assert flushed is not None
     assert len(flushed) == 200
     assert flushed[0].event_time <= flushed[-1].event_time
+
+
+def test_tick_batch_exposes_closed_candle_snapshot_for_candle_close_trigger() -> None:
+    service = MarketIngestService()
+    first_event_time = datetime(2026, 3, 14, 12, 0, 10, tzinfo=UTC)
+    second_event_time = datetime(2026, 3, 14, 12, 1, 0, tzinfo=UTC)
+    first = _event("KRW-BTC:alpha", first_event_time, first_event_time)
+    second = _event(
+        "KRW-BTC:beta",
+        second_event_time,
+        first_event_time + timedelta(milliseconds=300),
+    )
+
+    initial = service.process_event(first)
+    flushed = service.process_event(second)
+
+    assert initial["reason"] == "tick_buffered"
+    snapshot = flushed["snapshot"]
+    evaluation_snapshot = flushed["evaluation_snapshot"]
+
+    assert snapshot is not None
+    assert evaluation_snapshot is not None
+    assert snapshot.available_triggers == (
+        EvaluationTrigger.ON_TICK_BATCH,
+        EvaluationTrigger.ON_CANDLE_UPDATE,
+        EvaluationTrigger.ON_CANDLE_CLOSE,
+    )
+    assert snapshot.candles["1m"].candle_start == second_event_time
+    assert evaluation_snapshot.candles["1m"].candle_start == first_event_time.replace(second=0, microsecond=0)
+    assert evaluation_snapshot.candles["1m"].is_closed is True
+    assert evaluation_snapshot.snapshot_time == second_event_time
+
+
+def test_snapshot_exposes_recent_buy_and_sell_entry_rates() -> None:
+    service = MarketIngestService()
+    first_event_time = datetime(2026, 3, 15, 9, 0, 0, tzinfo=UTC)
+    second_event_time = first_event_time + timedelta(milliseconds=300)
+
+    first = _event("KRW-BTC:bid", first_event_time, first_event_time, trade_volume=3.0, ask_bid="BID")
+    second = _event("KRW-BTC:ask", second_event_time, second_event_time, trade_volume=1.0, ask_bid="ASK")
+
+    service.process_event(first)
+    flushed = service.process_event(second)
+
+    snapshot = flushed["snapshot"]
+
+    assert snapshot is not None
+    assert snapshot.buy_entry_rate_pct == 75.0
+    assert snapshot.sell_entry_rate_pct == 25.0
+    assert snapshot.entry_rate_window_sec == 60
 
 
 def test_snapshot_freshness_stale() -> None:

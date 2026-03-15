@@ -203,6 +203,9 @@ export interface ExitSection {
   trailing_stop_pct?: number;
   time_stop_bars?: number;
   partial_take_profits?: PartialTakeProfit[];
+  logic?: 'all' | 'any' | 'not';
+  conditions?: ConditionNode[];
+  condition?: ConditionNode;
 }
 
 // §14 Risk section
@@ -241,7 +244,7 @@ export interface BacktestSection {
 // §17 Explain payload
 export interface ExplainFact {
   label: string;
-  value: number;
+  value: string | number | boolean | null;
 }
 
 export interface ExplainPayload {
@@ -249,9 +252,12 @@ export interface ExplainPayload {
   decision: string;
   reason_codes: string[];
   facts: ExplainFact[];
+  parameters?: ExplainFact[];
   matched_conditions: string[];
   failed_conditions: string[];
   risk_blocks: string[];
+  legacy_payload?: boolean;
+  legacy_note?: string | null;
 }
 
 // §4 Full DSL root

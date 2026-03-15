@@ -29,6 +29,7 @@ export function App() {
           <Route index element={<DashboardPage />} />
           <Route path="monitoring" element={<MonitoringPage />} />
           <Route path="strategies" element={<StrategiesPage />} />
+          <Route path="strategies/new" element={<StrategyEditPage />} />
           <Route path="strategies/:id" element={<StrategyDetailPage />} />
           <Route path="strategies/:id/edit" element={<StrategyEditPage />} />
           <Route path="backtests" element={<BacktestsPage />} />

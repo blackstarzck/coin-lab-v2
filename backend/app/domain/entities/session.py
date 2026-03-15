@@ -121,6 +121,7 @@ class Signal:
     reason_codes: list[str]
     snapshot_time: datetime
     blocked: bool
+    explain_payload: dict[str, object] | None = None
 
 
 @dataclass(slots=True)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 
@@ -20,6 +20,13 @@ class ConnectionState(StrEnum):
     RECONNECTING = "RECONNECTING"
     RECOVERED = "RECOVERED"
     DEGRADED = "DEGRADED"
+
+
+class EvaluationTrigger(StrEnum):
+    ON_TICK_BATCH = "ON_TICK_BATCH"
+    ON_CANDLE_CLOSE = "ON_CANDLE_CLOSE"
+    ON_CANDLE_UPDATE = "ON_CANDLE_UPDATE"
+    ON_MANUAL_REEVALUATE = "ON_MANUAL_REEVALUATE"
 
 
 @dataclass(slots=True)
@@ -58,5 +65,14 @@ class MarketSnapshot:
     candles: dict[str, CandleState]
     volume_24h: float | None
     snapshot_time: datetime
+    buy_entry_rate_pct: float | None = None
+    sell_entry_rate_pct: float | None = None
+    entry_rate_window_sec: int = 60
+    candle_history: dict[str, tuple[CandleState, ...]] = field(default_factory=dict)
     is_stale: bool = False
     connection_state: ConnectionState = ConnectionState.CONNECTED
+    source_event_type: EventType | None = None
+    available_triggers: tuple[EvaluationTrigger, ...] = ()
+    trigger_trace_ids: tuple[str, ...] = ()
+    closed_timeframes: tuple[str, ...] = ()
+    updated_timeframes: tuple[str, ...] = ()
