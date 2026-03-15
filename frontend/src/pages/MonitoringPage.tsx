@@ -1,5 +1,4 @@
 import {
-  Alert,
   Box,
   Typography,
   Card,
@@ -11,16 +10,17 @@ import {
   TableHead,
   TableRow,
   Chip,
-  Checkbox,
   Skeleton,
   Stack,
   Button,
   Tabs,
   Tab,
-  useTheme,
+  Tooltip,
   Divider
 } from '@mui/material'
+import { useQuery } from '@tanstack/react-query'
 import { Activity, AlertTriangle, StopCircle, RefreshCw } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import {
   useSessions,
   useSession,
@@ -30,33 +30,62 @@ import {
   useSessionRiskEvents,
   useStopSession,
   useKillSession,
+  useReevaluateSession,
 } from '@/features/sessions/api'
+import { useMonitoringSummary } from '@/features/monitoring/api'
+import type { StrategyCard } from '@/features/monitoring/api'
+import { EventLogHelpPopover } from '@/features/monitoring/EventLogHelpPopover'
+import { useStrategies } from '@/features/strategies/api'
 import { useUiStore } from '@/stores/ui-store'
 import { CandlestickChart } from '@/shared/charts/CandlestickChart'
 import { useChartStream } from '@/features/monitoring/useChartStream'
+import { useActiveSymbolPrices } from '@/features/monitoring/useActiveSymbolPrices'
+import { StrategyExplainPanel } from '@/features/monitoring/StrategyExplainPanel'
 import { useEffect, useMemo, useState } from 'react'
 import { useLogs } from '@/features/logs/api'
 import {
   formatTime,
   translateConnectionState,
+  translateLogChannel,
+  translateLogLevel,
   translateMode,
   translateOrderRole,
   translateOrderState,
-  translatePositionState,
   translateSessionStatus,
-  translateSeverity,
   translateSignalAction,
 } from '@/shared/lib/i18n'
+import { apiClient } from '@/shared/api/client'
+import type { StrategyVersion } from '@/entities/strategy/types'
+import type { ApiResponse } from '@/shared/types/api'
+import { resolveChartIndicatorSettings } from '@/shared/charts/chartIndicators'
+import { StatusText } from '@/shared/ui/StatusText'
+import { useAnimatedTableRows } from '@/shared/ui/useAnimatedTableRows'
+
+const DETAIL_REFRESH_INTERVAL_MS = 2_000
+const POSITION_REFRESH_INTERVAL_MS = 5_000
+const SESSION_REFRESH_INTERVAL_MS = 5_000
+const SESSION_LIST_REFRESH_INTERVAL_MS = 10_000
 
 export default function MonitoringPage() {
-  const theme = useTheme()
-  const { data: sessions, isLoading: isLoadingSessions } = useSessions()
+  const navigate = useNavigate()
+  const [selectedStrategyId, setSelectedStrategyId] = useState<string | null>(null)
+  const [bottomTab, setBottomTab] = useState(0)
+  const [selectedSignalId, setSelectedSignalId] = useState<string | null>(null)
+
+  const shouldLoadEventLogs = bottomTab === 0
+  const shouldLoadStrategyExplain = bottomTab === 1
+  const shouldLoadSignals = bottomTab === 2
+  const shouldLoadOrders = bottomTab === 3
+  const shouldLoadRiskEvents = bottomTab === 4
+  const shouldLoadSignalData = shouldLoadStrategyExplain || shouldLoadSignals
+
+  const { data: sessions, isLoading: isLoadingSessions } = useSessions({ refetchIntervalMs: SESSION_LIST_REFRESH_INTERVAL_MS })
+  const { data: monitoringSummary } = useMonitoringSummary()
+  const { data: strategies, isLoading: isLoadingStrategies } = useStrategies()
   
   const { 
     selectedSessionId, 
     setSelectedSession, 
-    selectedCompareSessionIds,
-    setCompareSessionIds,
     selectedSymbol, 
     setSelectedSymbol,
     chartTimeframe,
@@ -65,15 +94,41 @@ export default function MonitoringPage() {
     toggleChartOverlay
   } = useUiStore()
 
-  const activeSessionId = selectedSessionId || sessions?.[0]?.id || ''
-  const { data: session } = useSession(activeSessionId)
-  const { data: positions } = useSessionPositions(activeSessionId)
-  const { data: orders } = useSessionOrders(activeSessionId)
-  const { data: signals } = useSessionSignals(activeSessionId)
-  const { data: riskEvents } = useSessionRiskEvents(activeSessionId)
-  const { data: eventLogs } = useLogs('strategy-execution', activeSessionId)
+  const activeSessionId = useMemo(() => {
+    if (selectedSessionId && sessions?.some((currentSession) => currentSession.id === selectedSessionId)) {
+      return selectedSessionId
+    }
+    return sessions?.[0]?.id || ''
+  }, [selectedSessionId, sessions])
+  const { data: session } = useSession(activeSessionId, { refetchIntervalMs: SESSION_REFRESH_INTERVAL_MS })
+  const { data: positions } = useSessionPositions(activeSessionId, { refetchIntervalMs: POSITION_REFRESH_INTERVAL_MS })
+  const { data: orders } = useSessionOrders(activeSessionId, {
+    enabled: shouldLoadOrders,
+    refetchIntervalMs: shouldLoadOrders ? DETAIL_REFRESH_INTERVAL_MS : undefined,
+  })
+  const { data: signals } = useSessionSignals(activeSessionId, {
+    enabled: shouldLoadSignalData,
+    refetchIntervalMs: shouldLoadSignalData ? DETAIL_REFRESH_INTERVAL_MS : undefined,
+  })
+  const { data: riskEvents } = useSessionRiskEvents(activeSessionId, {
+    enabled: shouldLoadRiskEvents,
+    refetchIntervalMs: shouldLoadRiskEvents ? DETAIL_REFRESH_INTERVAL_MS : undefined,
+  })
+  const { data: strategyExecutionLogs } = useLogs('strategy-execution', activeSessionId, 50, {
+    enabled: shouldLoadEventLogs,
+    refetchIntervalMs: shouldLoadEventLogs ? DETAIL_REFRESH_INTERVAL_MS : undefined,
+  })
+  const { data: orderSimulationLogs } = useLogs('order-simulation', activeSessionId, 50, {
+    enabled: shouldLoadEventLogs,
+    refetchIntervalMs: shouldLoadEventLogs ? DETAIL_REFRESH_INTERVAL_MS : undefined,
+  })
+  const { data: riskControlLogs } = useLogs('risk-control', activeSessionId, 50, {
+    enabled: shouldLoadEventLogs,
+    refetchIntervalMs: shouldLoadEventLogs ? DETAIL_REFRESH_INTERVAL_MS : undefined,
+  })
   const stopSession = useStopSession()
   const killSession = useKillSession()
+  const reevaluateSession = useReevaluateSession()
 
   const availableSymbols = useMemo(
     () => session?.symbol_scope?.active_symbols || [],
@@ -83,27 +138,79 @@ export default function MonitoringPage() {
     ? selectedSymbol
     : availableSymbols[0] || null
 
-  const { data: chartData, isConnected } = useChartStream(activeSymbol, chartTimeframe)
+  const { data: chartData } = useChartStream(activeSymbol, chartTimeframe)
+  const { pricesBySymbol } = useActiveSymbolPrices(availableSymbols)
 
-  const [rightTab, setRightTab] = useState(0)
-  const [bottomTab, setBottomTab] = useState(0)
+  const eventTimeline = useMemo(() => (
+    [
+      ...(strategyExecutionLogs ?? []),
+      ...(orderSimulationLogs ?? []),
+      ...(riskControlLogs ?? []),
+    ].sort((left, right) => {
+      const timeCompare = new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime()
+      if (timeCompare !== 0) {
+        return timeCompare
+      }
+      return right.id.localeCompare(left.id)
+    })
+  ), [orderSimulationLogs, riskControlLogs, strategyExecutionLogs])
+  const orderedSignals = useMemo(
+    () => [...(signals ?? [])].sort((left, right) => {
+      const timeCompare = new Date(right.snapshot_time).getTime() - new Date(left.snapshot_time).getTime()
+      if (timeCompare !== 0) {
+        return timeCompare
+      }
+      return right.id.localeCompare(left.id)
+    }),
+    [signals],
+  )
+
+  const eventLogRowIds = useMemo(() => eventTimeline.map((log) => `${log.channel}:${log.id}`), [eventTimeline])
+  const signalRowIds = useMemo(() => orderedSignals.map((signal) => signal.id), [orderedSignals])
+  const orderRowIds = useMemo(() => orders?.map((order) => order.id) ?? [], [orders])
+  const riskRowIds = useMemo(() => riskEvents?.map((event) => event.id) ?? [], [riskEvents])
+  const { setRowRef: setEventLogRowRef } = useAnimatedTableRows(eventLogRowIds)
+  const { setRowRef: setSignalRowRef } = useAnimatedTableRows(signalRowIds)
+  const { setRowRef: setOrderRowRef } = useAnimatedTableRows(orderRowIds)
+  const { setRowRef: setRiskRowRef } = useAnimatedTableRows(riskRowIds)
 
   useEffect(() => {
-    if (!selectedSessionId && sessions?.[0]?.id) {
-      setSelectedSession(sessions[0].id)
+    if (activeSessionId && selectedSessionId !== activeSessionId) {
+      setSelectedSession(activeSessionId)
     }
-  }, [selectedSessionId, sessions, setSelectedSession])
+  }, [activeSessionId, selectedSessionId, setSelectedSession])
 
   useEffect(() => {
-    if (!selectedSymbol && availableSymbols[0]) {
-      setSelectedSymbol(availableSymbols[0])
+    if (selectedSymbol && availableSymbols.includes(selectedSymbol)) {
+      return
     }
+    setSelectedSymbol(availableSymbols[0] ?? null)
   }, [availableSymbols, selectedSymbol, setSelectedSymbol])
 
-  const compareSessions = useMemo(
-    () => (sessions ?? []).filter((item) => selectedCompareSessionIds.includes(item.id)),
-    [selectedCompareSessionIds, sessions],
-  )
+  useEffect(() => {
+    if (!activeSessionId && selectedSessionId) {
+      setSelectedSession(null)
+    }
+  }, [activeSessionId, selectedSessionId, setSelectedSession])
+
+  useEffect(() => {
+    if (bottomTab > 4) {
+      setBottomTab(4)
+    }
+  }, [bottomTab])
+
+  useEffect(() => {
+    if (!orderedSignals.length) {
+      if (selectedSignalId !== null) {
+        setSelectedSignalId(null)
+      }
+      return
+    }
+
+    if (!selectedSignalId || !orderedSignals.some((signal) => signal.id === selectedSignalId)) {
+      setSelectedSignalId(orderedSignals[0].id)
+    }
+  }, [orderedSignals, selectedSignalId])
 
   const getModeColor = (mode: string) => {
     switch (mode) {
@@ -134,40 +241,362 @@ export default function MonitoringPage() {
     }
   }
 
-  const getActionColor = (action: string) => {
-    return action === 'ENTER' ? 'success' : 'error'
+  const getActionTone = (action: string): 'success' | 'danger' => {
+    return action === 'ENTER' ? 'success' : 'danger'
   }
 
-  const getOrderStateColor = (state: string) => {
-    switch (state) {
-      case 'FILLED': return 'success'
-      case 'REJECTED': return 'error'
-      case 'FAILED': return 'error'
-      case 'CANCELLED': return 'default'
-      case 'SUBMITTED': return 'info'
-      case 'CREATED': return 'default'
-      default: return 'default'
+  const getPnlTone = (value: number): 'success' | 'danger' | 'default' => {
+    if (value > 0) {
+      return 'success'
+    }
+    if (value < 0) {
+      return 'danger'
+    }
+    return 'default'
+  }
+
+  const getSessionStatusTone = (status: string): 'success' | 'warning' | 'info' | 'danger' | 'default' => {
+    switch (status) {
+      case 'RUNNING':
+        return 'success'
+      case 'PENDING':
+        return 'info'
+      case 'STOPPING':
+        return 'warning'
+      case 'FAILED':
+        return 'danger'
+      default:
+        return 'default'
     }
   }
 
-  const getPositionStateColor = (state: string) => {
-    switch (state) {
-      case 'OPEN': return 'success'
-      case 'CLOSED': return 'default'
-      case 'OPENING': return 'info'
-      case 'CLOSING': return 'warning'
-      case 'FAILED': return 'error'
-      default: return 'default'
-    }
+  const asNumber = (value: unknown) => {
+    const parsed = typeof value === 'number' ? value : Number(value)
+    return Number.isFinite(parsed) ? parsed : 0
   }
 
-  const toggleCompareSession = (id: string) => {
-    if (selectedCompareSessionIds.includes(id)) {
-      setCompareSessionIds(selectedCompareSessionIds.filter((sessionId) => sessionId !== id))
+  const formatSignedAmount = (value: number) => `${value > 0 ? '+' : ''}${Math.round(value).toLocaleString()}`
+  const formatSignedPercent = (value: number) => `${value > 0 ? '+' : ''}${value.toFixed(2)}%`
+  const formatChartPrice = (value: number) => Math.round(value).toLocaleString('ko-KR')
+
+  const strategyIds = useMemo(
+    () => (strategies ?? []).map((strategy) => strategy.id).sort(),
+    [strategies],
+  )
+
+  const { data: strategyVersionBundles, isLoading: isLoadingStrategyVersions } = useQuery({
+    queryKey: ['monitoring', 'strategy-version-bundles', strategyIds],
+    queryFn: async () =>
+      Promise.all(
+        (strategies ?? []).map(async (strategy) => {
+          const response = await apiClient.get<unknown, ApiResponse<StrategyVersion[]>>(`/strategies/${strategy.id}/versions`)
+          return {
+            strategy,
+            versions: response.data,
+          }
+        }),
+      ),
+    enabled: strategyIds.length > 0,
+    staleTime: 60_000,
+  })
+
+  const strategyCardByVersionId = useMemo(() => {
+    const cardMap = new Map<string, StrategyCard>()
+
+    ;(monitoringSummary?.strategy_cards ?? []).forEach((card) => {
+      if (card.latest_version_id) {
+        cardMap.set(card.latest_version_id, card)
+      }
+    })
+
+    return cardMap
+  }, [monitoringSummary?.strategy_cards])
+
+  const strategyMetaByVersionId = useMemo(() => {
+    const versionMap = new Map<
+      string,
+      {
+        strategyId: string
+        strategyName: string
+        strategyKey: string
+        strategyDescription: string | null
+        versionNo: number
+        isValidated: boolean
+      }
+    >()
+
+    ;(strategyVersionBundles ?? []).forEach(({ strategy, versions }) => {
+      versions.forEach((version) => {
+        versionMap.set(version.id, {
+          strategyId: strategy.id,
+          strategyName: strategy.name,
+          strategyKey: strategy.strategy_key,
+          strategyDescription: strategy.description,
+          versionNo: version.version_no,
+          isValidated: version.is_validated,
+        })
+      })
+    })
+
+    return versionMap
+  }, [strategyVersionBundles])
+
+  const strategyConfigByVersionId = useMemo(() => {
+    const configMap = new Map<string, Record<string, unknown>>()
+
+    ;(strategyVersionBundles ?? []).forEach(({ versions }) => {
+      versions.forEach((version) => {
+        configMap.set(version.id, version.config_json ?? {})
+      })
+    })
+
+    return configMap
+  }, [strategyVersionBundles])
+
+  const sessionsWithStrategy = useMemo(() => {
+    const sessionStatusRank = (status: string) => {
+      switch (status) {
+        case 'RUNNING':
+          return 0
+        case 'PENDING':
+          return 1
+        case 'STOPPING':
+          return 2
+        case 'FAILED':
+          return 3
+        case 'STOPPED':
+          return 4
+        default:
+          return 5
+      }
+    }
+
+    return (sessions ?? [])
+      .map((currentSession) => {
+        const versionMeta = strategyMetaByVersionId.get(currentSession.strategy_version_id)
+        const fallbackCard = strategyCardByVersionId.get(currentSession.strategy_version_id)
+        const fallbackStrategyId = `version:${currentSession.strategy_version_id}`
+
+        return {
+          session: currentSession,
+          strategyId: versionMeta?.strategyId ?? fallbackCard?.strategy_id ?? fallbackStrategyId,
+          strategyName: versionMeta?.strategyName ?? fallbackCard?.strategy_name ?? `전략 v${currentSession.strategy_version_id.split('-')[0]}`,
+          strategyKey: versionMeta?.strategyKey ?? fallbackCard?.strategy_key ?? currentSession.strategy_version_id.split('-')[0],
+          strategyDescription: versionMeta?.strategyDescription ?? null,
+          versionNo: versionMeta?.versionNo ?? fallbackCard?.latest_version_no ?? null,
+          isValidated: versionMeta?.isValidated ?? Boolean(fallbackCard?.is_validated),
+          strategyReturnPct: fallbackCard?.last_7d_return_pct ?? null,
+        }
+      })
+      .sort((left, right) => {
+        const strategyCompare = left.strategyName.localeCompare(right.strategyName)
+        if (strategyCompare !== 0) {
+          return strategyCompare
+        }
+
+        const statusCompare = sessionStatusRank(left.session.status) - sessionStatusRank(right.session.status)
+        if (statusCompare !== 0) {
+          return statusCompare
+        }
+
+        return (right.session.started_at ?? '').localeCompare(left.session.started_at ?? '')
+      })
+  }, [sessions, strategyCardByVersionId, strategyMetaByVersionId])
+
+  const strategyGroups = useMemo(() => {
+    const grouped = new Map<
+      string,
+      {
+        strategyId: string
+        strategyName: string
+        strategyKey: string
+        strategyDescription: string | null
+        sessions: typeof sessionsWithStrategy
+        versionLabels: Set<string>
+        runningSessionCount: number
+        latestSessionStartedAt: string | null
+        strategyReturnPct: number | null
+        isNavigable: boolean
+      }
+    >()
+
+    sessionsWithStrategy.forEach((entry) => {
+      const group = grouped.get(entry.strategyId)
+      const versionLabel = entry.versionNo ? `v${entry.versionNo}` : `v${entry.session.strategy_version_id.split('-')[0]}`
+      const sessionStartedAt = entry.session.started_at ?? entry.session.created_at ?? null
+
+      if (group) {
+        group.sessions.push(entry)
+        group.versionLabels.add(versionLabel)
+        group.runningSessionCount += entry.session.status === 'RUNNING' ? 1 : 0
+        if (sessionStartedAt && (!group.latestSessionStartedAt || sessionStartedAt > group.latestSessionStartedAt)) {
+          group.latestSessionStartedAt = sessionStartedAt
+        }
+        return
+      }
+
+      grouped.set(entry.strategyId, {
+        strategyId: entry.strategyId,
+        strategyName: entry.strategyName,
+        strategyKey: entry.strategyKey,
+        strategyDescription: entry.strategyDescription,
+        sessions: [entry],
+        versionLabels: new Set([versionLabel]),
+        runningSessionCount: entry.session.status === 'RUNNING' ? 1 : 0,
+        latestSessionStartedAt: sessionStartedAt,
+        strategyReturnPct: entry.strategyReturnPct,
+        isNavigable: !entry.strategyId.startsWith('version:'),
+      })
+    })
+
+    return Array.from(grouped.values())
+      .map((group) => ({
+        ...group,
+        versionSummary: group.versionLabels.size === 1
+          ? Array.from(group.versionLabels)[0]
+          : `버전 ${group.versionLabels.size}개`,
+      }))
+      .sort((left, right) => {
+        if (right.runningSessionCount !== left.runningSessionCount) {
+          return right.runningSessionCount - left.runningSessionCount
+        }
+
+        return left.strategyName.localeCompare(right.strategyName)
+      })
+  }, [sessionsWithStrategy])
+
+  const activeSessionEntry = useMemo(
+    () => sessionsWithStrategy.find((entry) => entry.session.id === activeSessionId) ?? null,
+    [activeSessionId, sessionsWithStrategy],
+  )
+
+  const activeStrategyConfig = useMemo(
+    () => (session ? strategyConfigByVersionId.get(session.strategy_version_id) ?? null : null),
+    [session, strategyConfigByVersionId],
+  )
+
+  const activeIndicatorSettings = useMemo(
+    () => resolveChartIndicatorSettings(activeStrategyConfig),
+    [activeStrategyConfig],
+  )
+
+  const selectedStrategyGroup = useMemo(
+    () => strategyGroups.find((group) => group.strategyId === selectedStrategyId) ?? null,
+    [selectedStrategyId, strategyGroups],
+  )
+
+  const filteredSessionEntries = useMemo(() => {
+    if (!selectedStrategyId) {
+      return sessionsWithStrategy
+    }
+    return sessionsWithStrategy.filter((entry) => entry.strategyId === selectedStrategyId)
+  }, [selectedStrategyId, sessionsWithStrategy])
+
+  useEffect(() => {
+    if (!strategyGroups.length) {
+      if (selectedStrategyId !== null) {
+        setSelectedStrategyId(null)
+      }
       return
     }
-    if (selectedCompareSessionIds.length < 4) {
-      setCompareSessionIds([...selectedCompareSessionIds, id])
+
+    if (activeSessionEntry?.strategyId) {
+      if (selectedStrategyId !== activeSessionEntry.strategyId) {
+        setSelectedStrategyId(activeSessionEntry.strategyId)
+      }
+      return
+    }
+
+    if (!selectedStrategyId || !strategyGroups.some((group) => group.strategyId === selectedStrategyId)) {
+      setSelectedStrategyId(strategyGroups[0].strategyId)
+    }
+  }, [activeSessionEntry, selectedStrategyId, strategyGroups])
+
+  const symbolPerformanceRows = useMemo(() => {
+    const positionBySymbol = new Map()
+    const openPositionStates = new Set(['OPENING', 'OPEN', 'CLOSING'])
+
+    positions?.forEach((position) => {
+      if (!openPositionStates.has(position.position_state)) {
+        return
+      }
+      positionBySymbol.set(position.symbol, position)
+    })
+
+    return availableSymbols.map((symbol) => {
+      const position = positionBySymbol.get(symbol)
+      const latestPrice = pricesBySymbol[symbol]?.price
+      const avgEntryPrice = asNumber(position?.avg_entry_price)
+      const quantity = asNumber(position?.quantity)
+      const canUseLivePrice =
+        typeof latestPrice === 'number'
+        && Number.isFinite(latestPrice)
+        && avgEntryPrice > 0
+        && quantity > 0
+
+      const pnlAmount = canUseLivePrice
+        ? (latestPrice - avgEntryPrice) * quantity
+        : asNumber(position?.unrealized_pnl)
+      const pnlPercent = canUseLivePrice
+        ? ((latestPrice - avgEntryPrice) / avgEntryPrice) * 100
+        : asNumber(position?.unrealized_pnl_pct)
+
+      return {
+        symbol,
+        pnlAmount,
+        pnlPercent,
+      }
+    })
+  }, [availableSymbols, positions, pricesBySymbol])
+
+  const activeSymbolSignals = useMemo(
+    () => orderedSignals.filter((signal) => signal.symbol === activeSymbol),
+    [activeSymbol, orderedSignals],
+  )
+
+  const latestCandle = useMemo(() => {
+    if (!chartData?.candles?.length) {
+      return null
+    }
+    return chartData.candles[chartData.candles.length - 1] ?? null
+  }, [chartData])
+
+  const chartTimeframeOptions = [
+    { value: '1m', label: '1' },
+    { value: '5m', label: '5' },
+    { value: '15m', label: '15' },
+    { value: '1h', label: '1H' },
+  ] as const
+
+  const neutralIndicatorChipSx = {
+    height: 24,
+    fontSize: 11,
+    fontWeight: 500,
+    color: '#cbd5e1',
+    bgcolor: 'transparent',
+    border: '1px solid rgba(255, 255, 255, 0.12)',
+    borderRadius: 999,
+  } as const
+
+  const handleStrategySelect = (strategyId: string) => {
+    setSelectedStrategyId(strategyId)
+
+    const targetGroup = strategyGroups.find((group) => group.strategyId === strategyId)
+    const nextSession = targetGroup?.sessions[0]?.session
+
+    if (nextSession && nextSession.id !== activeSessionId) {
+      setSelectedSession(nextSession.id)
+      setSelectedSymbol(null)
+    }
+  }
+
+  const handleSessionSelect = (sessionId: string) => {
+    setSelectedSession(sessionId)
+    setSelectedSymbol(null)
+
+    const nextEntry = sessionsWithStrategy.find((entry) => entry.session.id === sessionId)
+    if (nextEntry && nextEntry.strategyId !== selectedStrategyId) {
+      setSelectedStrategyId(nextEntry.strategyId)
     }
   }
 
@@ -202,13 +631,13 @@ export default function MonitoringPage() {
                 </Typography>
                 <Divider orientation="vertical" flexItem />
                 <Typography variant="body2" color="text.secondary">
-                  전략 v{session.strategy_version_id.split('-')[0]}
+                  {activeSessionEntry?.strategyName ?? `전략 v${session.strategy_version_id.split('-')[0]}`}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {activeSessionEntry?.versionNo ? `v${activeSessionEntry.versionNo}` : `v${session.strategy_version_id.split('-')[0]}`}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
                   {session.started_at ? formatTime(session.started_at) : '시작 전'}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  비교 {compareSessions.length}개
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
                   심볼 {availableSymbols.length}개
@@ -235,6 +664,31 @@ export default function MonitoringPage() {
           </Stack>
           
           <Stack direction="row" spacing={1}>
+            {selectedStrategyGroup?.isNavigable ? (
+              <Button
+                variant="text"
+                color="inherit"
+                onClick={() => navigate(`/strategies/${selectedStrategyGroup.strategyId}`)}
+              >
+                전략 상세
+              </Button>
+            ) : null}
+            <Button
+              variant="outlined"
+              color="inherit"
+              startIcon={<RefreshCw size={16} />}
+              disabled={!session || session.status !== 'RUNNING' || reevaluateSession.isPending}
+              onClick={() => {
+                if (session) {
+                  reevaluateSession.mutate({
+                    id: session.id,
+                    symbols: activeSymbol ? [activeSymbol] : undefined,
+                  })
+                }
+              }}
+            >
+              수동 재평가
+            </Button>
             <Button 
               variant="outlined" 
               color="inherit" 
@@ -268,195 +722,510 @@ export default function MonitoringPage() {
       {/* 3-Column Layout */}
       <Box sx={{ display: 'flex', flexGrow: 1, gap: 2, minHeight: 0 }}>
         
-        {/* Left Panel - Sessions & Universe */}
-        <Card sx={{ width: 280, display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-          <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
-            <Typography variant="subtitle2" color="text.secondary" gutterBottom>세션</Typography>
-            <Stack spacing={1} sx={{ maxHeight: 200, overflowY: 'auto' }}>
-              {isLoadingSessions ? (
-                <Skeleton variant="rounded" height={40} />
-              ) : sessions?.length === 0 ? (
-                <Typography variant="body2" color="text.secondary">실행 중인 세션이 없습니다</Typography>
-              ) : (
-                sessions?.map(s => (
-                  <Box 
-                    key={s.id}
-                    onClick={() => setSelectedSession(s.id)}
-                    sx={{ 
-                      p: 1, 
-                      borderRadius: 1, 
-                      cursor: 'pointer',
-                      border: 1,
-                      borderColor: activeSessionId === s.id ? 'primary.main' : 'divider',
-                      bgcolor: activeSessionId === s.id ? 'rgba(34, 231, 107, 0.05)' : 'transparent',
-                      '&:hover': { bgcolor: 'rgba(255,255,255,0.02)' }
-                    }}
-                  >
-                    <Stack direction="row" justifyContent="space-between" alignItems="center" mb={0.5}>
-                      <Typography variant="body2" fontFamily="monospace">{s.id.split('-')[0]}</Typography>
-                      <Chip 
-                        label={translateMode(s.mode)} 
-                        size="small" 
-                        sx={{ 
-                          fontSize: 10, 
-                          height: 16,
-                          bgcolor: getModeColor(s.mode) === 'default' ? 'action.disabledBackground' : `status.${getModeColor(s.mode)}`,
-                          color: getModeColor(s.mode) === 'default' ? 'text.secondary' : 'white'
-                        }} 
-                      />
-                    </Stack>
-                    <Stack direction="row" justifyContent="space-between" alignItems="center">
-                      <Typography variant="caption" color="text.secondary">v{s.strategy_version_id.split('-')[0]}</Typography>
-                      <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: getStatusColor(s.status) === 'default' ? 'text.disabled' : `status.${getStatusColor(s.status)}` }} />
-                    </Stack>
-                  </Box>
-                ))
-              )}
-            </Stack>
-          </Box>
-
-          <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
-            <Typography variant="subtitle2" color="text.secondary" gutterBottom>비교</Typography>
-            <Stack spacing={0.5}>
-              {(sessions ?? []).slice(0, 4).map((compareSession) => (
-                <Box key={compareSession.id} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Stack direction="row" spacing={1} alignItems="center">
-                    <Checkbox
-                      size="small"
-                      checked={selectedCompareSessionIds.includes(compareSession.id)}
-                      onChange={() => toggleCompareSession(compareSession.id)}
-                      disabled={!selectedCompareSessionIds.includes(compareSession.id) && selectedCompareSessionIds.length >= 4}
-                    />
-                    <Box>
-                      <Typography variant="caption" fontWeight={600}>{compareSession.id.split('-')[0]}</Typography>
-                      <Typography variant="caption" color="text.secondary" display="block">
-                        {compareSession.performance?.realized_pnl_pct?.toFixed(2) ?? '0.00'}%
-                      </Typography>
-                    </Box>
-                  </Stack>
-                  <Chip label={translateMode(compareSession.mode)} size="small" variant="outlined" sx={{ height: 18, fontSize: 10 }} />
-                </Box>
-              ))}
-            </Stack>
-          </Box>
-          
-          <Box sx={{ p: 2, flexGrow: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-            <Typography variant="subtitle2" color="text.secondary" gutterBottom>활성 유니버스</Typography>
-            <Box sx={{ overflowY: 'auto', flexGrow: 1 }}>
-              {!session ? (
-                <Typography variant="body2" color="text.secondary">세션을 선택하세요</Typography>
-              ) : !session.symbol_scope?.active_symbols?.length ? (
-                <Typography variant="body2" color="text.secondary">활성 심볼이 없습니다</Typography>
-              ) : (
-                <Stack spacing={0.5}>
-                  {session.symbol_scope.active_symbols.map(sym => (
-                    <Box 
-                      key={sym}
-                      onClick={() => setSelectedSymbol(sym)}
-                      sx={{ 
-                        p: 1, 
-                        borderRadius: 1, 
-                        cursor: 'pointer',
-                        bgcolor: activeSymbol === sym ? 'rgba(255,255,255,0.05)' : 'transparent',
-                        '&:hover': { bgcolor: 'rgba(255,255,255,0.02)' },
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center'
-                      }}
-                    >
-                      <Typography variant="body2" fontWeight={activeSymbol === sym ? 600 : 400}>{sym}</Typography>
-                      {activeSymbol === sym && <Activity size={14} color={theme.palette.primary.main} />}
-                    </Box>
-                  ))}
+        {/* Left Column - Strategy > Session > PnL */}
+        <Box sx={{ width: 360, display: 'flex', flexDirection: 'column', gap: 2, flexShrink: 0, minHeight: 0 }}>
+          <Card sx={{ minHeight: 220, maxHeight: 260, display: 'flex', flexDirection: 'column' }}>
+            <Box sx={{ px: 2, py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
+              <Typography variant="subtitle2" fontWeight={700}>
+                전략
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                최근 7일 전략 성과
+              </Typography>
+            </Box>
+            <Box sx={{ flexGrow: 1, minHeight: 0 }}>
+              {isLoadingStrategies || isLoadingStrategyVersions ? (
+                <Stack spacing={1} sx={{ p: 2 }}>
+                  <Skeleton variant="rounded" height={40} />
+                  <Skeleton variant="rounded" height={40} />
+                  <Skeleton variant="rounded" height={40} />
                 </Stack>
+              ) : strategyGroups.length === 0 ? (
+                <Box sx={{ p: 2 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    세션과 연결된 전략이 없습니다
+                  </Typography>
+                </Box>
+              ) : (
+                <TableContainer sx={{ maxHeight: '100%' }}>
+                  <Table size="small" stickyHeader>
+                    <TableHead>
+                      <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 11 } }}>
+                        <TableCell>전략</TableCell>
+                        <TableCell>버전</TableCell>
+                        <TableCell align="right">세션</TableCell>
+                        <TableCell align="right">7일</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {strategyGroups.map((group) => (
+                        <TableRow
+                          key={group.strategyId}
+                          hover
+                          onClick={() => handleStrategySelect(group.strategyId)}
+                          sx={{
+                            cursor: 'pointer',
+                            bgcolor: selectedStrategyId === group.strategyId ? 'rgba(34, 231, 107, 0.05)' : 'transparent',
+                          }}
+                        >
+                          <TableCell sx={{ minWidth: 0 }}>
+                            <Typography variant="body2" fontWeight={700} noWrap>
+                              {group.strategyName}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary" noWrap>
+                              {group.strategyKey}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="caption" color="text.secondary">
+                              {group.versionSummary}
+                            </Typography>
+                          </TableCell>
+                          <TableCell align="right">
+                            <Typography variant="caption" color="text.secondary">
+                              {group.runningSessionCount}/{group.sessions.length}
+                            </Typography>
+                          </TableCell>
+                          <TableCell align="right">
+                            {group.strategyReturnPct === null ? (
+                              <Typography variant="caption" color="text.disabled">
+                                없음
+                              </Typography>
+                            ) : (
+                              <StatusText tone={getPnlTone(group.strategyReturnPct)}>
+                                {formatSignedPercent(group.strategyReturnPct)}
+                              </StatusText>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
               )}
             </Box>
-          </Box>
-        </Card>
+          </Card>
+
+          <Card sx={{ flexGrow: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+            <Box sx={{ px: 2, py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
+              <Typography variant="subtitle2" fontWeight={700}>
+                세션
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {selectedStrategyGroup ? `${selectedStrategyGroup.strategyName}의 세션` : '전략을 먼저 선택하세요'}
+              </Typography>
+            </Box>
+            <Box sx={{ flexGrow: 1, minHeight: 0 }}>
+              {isLoadingSessions ? (
+                <Stack spacing={1} sx={{ p: 2 }}>
+                  <Skeleton variant="rounded" height={40} />
+                  <Skeleton variant="rounded" height={40} />
+                  <Skeleton variant="rounded" height={40} />
+                </Stack>
+              ) : filteredSessionEntries.length === 0 ? (
+                <Box sx={{ p: 2 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    선택한 전략의 세션이 없습니다
+                  </Typography>
+                </Box>
+              ) : (
+                <TableContainer sx={{ maxHeight: '100%' }}>
+                  <Table size="small" stickyHeader>
+                    <TableHead>
+                      <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 11 } }}>
+                        <TableCell>세션</TableCell>
+                        <TableCell>버전</TableCell>
+                        <TableCell>상태</TableCell>
+                        <TableCell align="right">시작</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {filteredSessionEntries.map(({ session: currentSession, versionNo }) => (
+                        <TableRow
+                          key={currentSession.id}
+                          hover
+                          onClick={() => handleSessionSelect(currentSession.id)}
+                          sx={{
+                            cursor: 'pointer',
+                            bgcolor: activeSessionId === currentSession.id ? 'rgba(34, 231, 107, 0.05)' : 'transparent',
+                          }}
+                        >
+                          <TableCell sx={{ minWidth: 0 }}>
+                            <Typography variant="body2" fontFamily="monospace" noWrap>
+                              {currentSession.id.split('-')[0]}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary" noWrap>
+                              {translateMode(currentSession.mode)}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="caption" color="text.secondary">
+                              {versionNo ? `v${versionNo}` : `v${currentSession.strategy_version_id.split('-')[0]}`}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <StatusText tone={getSessionStatusTone(currentSession.status)}>
+                              {translateSessionStatus(currentSession.status)}
+                            </StatusText>
+                          </TableCell>
+                          <TableCell align="right">
+                            <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
+                              {currentSession.started_at ? formatTime(currentSession.started_at) : '시작 전'}
+                            </Typography>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              )}
+            </Box>
+          </Card>
+
+          <Card sx={{ minHeight: 220, maxHeight: 280, display: 'flex', flexDirection: 'column' }}>
+            <Box sx={{ px: 2, py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
+              <Stack direction="row" spacing={0.75} alignItems="center">
+                <Typography variant="subtitle2" fontWeight={700}>
+                  수익 현황
+                </Typography>
+                <Tooltip title="초기 자금 100만원" placement="top" arrow>
+                  <Box
+                    component="span"
+                    aria-label="초기 자금 정보"
+                    sx={{
+                      width: 18,
+                      height: 18,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderRadius: '50%',
+                      border: 1,
+                      borderColor: 'divider',
+                      color: 'text.secondary',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      lineHeight: 1,
+                      cursor: 'help',
+                    }}
+                  >
+                    i
+                  </Box>
+                </Tooltip>
+              </Stack>
+              <Typography variant="caption" color="text.secondary">
+                {activeSessionEntry ? `${activeSessionEntry.strategyName} · ${activeSessionEntry.session.id.split('-')[0]}` : '선택된 세션 없음'}
+              </Typography>
+            </Box>
+            <Box sx={{ flexGrow: 1, minHeight: 0 }}>
+              <TableContainer sx={{ maxHeight: '100%' }}>
+                <Table size="small" stickyHeader sx={{ '& .MuiTableCell-root': { py: 1, px: 1.5 } }}>
+                  <TableHead>
+                    <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 11 } }}>
+                      <TableCell>심볼</TableCell>
+                      <TableCell align="right">수익률</TableCell>
+                      <TableCell align="right">손익</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {!symbolPerformanceRows.length ? (
+                      <TableRow>
+                        <TableCell colSpan={3} align="center" sx={{ py: 4 }}>
+                          <Typography variant="body2" color="text.secondary">
+                            생성된 성과가 없습니다
+                          </Typography>
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      symbolPerformanceRows.map((row) => {
+                        const pnlTone = getPnlTone(row.pnlAmount)
+
+                        return (
+                          <TableRow
+                            key={row.symbol}
+                            hover
+                            onClick={() => setSelectedSymbol(row.symbol)}
+                            sx={{
+                              cursor: 'pointer',
+                              bgcolor: activeSymbol === row.symbol ? 'rgba(34, 231, 107, 0.05)' : 'transparent',
+                            }}
+                          >
+                            <TableCell>
+                              <Typography variant="body2" fontWeight={700}>
+                                {row.symbol}
+                              </Typography>
+                            </TableCell>
+                            <TableCell align="right">
+                              <StatusText tone={getPnlTone(row.pnlPercent)} variant="body2">
+                                {formatSignedPercent(row.pnlPercent)}
+                              </StatusText>
+                            </TableCell>
+                            <TableCell align="right">
+                              <StatusText tone={pnlTone} variant="body2">
+                                {formatSignedAmount(row.pnlAmount)}
+                              </StatusText>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })
+                    )}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            </Box>
+          </Card>
+        </Box>
 
         {/* Center Panel - Chart */}
-        <Card sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-          <Box sx={{ p: 1.5, borderBottom: 1, borderColor: 'divider', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Stack direction="row" spacing={2} alignItems="center">
-              <Typography variant="subtitle1" fontWeight={600}>
-                {activeSymbol || '선택된 심볼 없음'}
-              </Typography>
-              {isConnected && (
-                <Chip icon={<RefreshCw size={12} />} label="실시간" size="small" color="success" variant="outlined" sx={{ height: 20, fontSize: 10 }} />
-              )}
-            </Stack>
-            
-            <Stack direction="row" spacing={2} alignItems="center">
-              <Stack direction="row" spacing={0.5}>
-                {['1m', '5m', '15m', '1h'].map(tf => (
-                  <Button 
-                    key={tf}
-                    size="small" 
-                    variant={chartTimeframe === tf ? 'contained' : 'text'} 
-                    color={chartTimeframe === tf ? 'primary' : 'inherit'}
-                    onClick={() => setChartTimeframe(tf)}
-                    sx={{ minWidth: 0, px: 1, py: 0.5 }}
-                  >
-                    {tf}
-                  </Button>
+        <Card
+          sx={{
+            flexGrow: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            minWidth: 0,
+            minHeight: 0,
+            bgcolor: '#0f172a',
+            border: '1px solid rgba(255, 255, 255, 0.08)',
+            boxShadow: '0 18px 36px rgba(2, 6, 23, 0.38)',
+            overflow: 'hidden',
+          }}
+        >
+          <Box
+            sx={{
+              px: 2,
+              py: 1.5,
+              borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 1.25,
+              bgcolor: '#111827',
+            }}
+          >
+            <Stack direction="row" justifyContent="space-between" alignItems="flex-start" flexWrap="wrap" gap={1.5}>
+              <Stack spacing={0.5}>
+                <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                  <Typography sx={{ fontSize: 22, fontWeight: 700, color: '#f8fafc', lineHeight: 1.1 }}>
+                    {activeSymbol || '선택된 심볼 없음'}
+                  </Typography>
+                </Stack>
+                {latestCandle ? (
+                  <Stack direction="row" spacing={1.25} flexWrap="wrap" sx={{ color: '#94a3b8' }}>
+                    <Typography variant="caption" sx={{ color: '#94a3b8' }}>
+                      시가 <Box component="span" sx={{ color: '#f8fafc', fontWeight: 600 }}>{formatChartPrice(latestCandle.open)}</Box>
+                    </Typography>
+                    <Typography variant="caption" sx={{ color: '#94a3b8' }}>
+                      고가 <Box component="span" sx={{ color: '#f87171', fontWeight: 600 }}>{formatChartPrice(latestCandle.high)}</Box>
+                    </Typography>
+                    <Typography variant="caption" sx={{ color: '#94a3b8' }}>
+                      저가 <Box component="span" sx={{ color: '#60a5fa', fontWeight: 600 }}>{formatChartPrice(latestCandle.low)}</Box>
+                    </Typography>
+                    <Typography variant="caption" sx={{ color: '#94a3b8' }}>
+                      종가 <Box component="span" sx={{ color: latestCandle.close >= latestCandle.open ? '#f87171' : '#60a5fa', fontWeight: 700 }}>{formatChartPrice(latestCandle.close)}</Box>
+                    </Typography>
+                  </Stack>
+                ) : (
+                  <Typography variant="caption" sx={{ color: '#94a3b8' }}>
+                    전략 설정의 이동평균선을 차트에 반영하고, 거래량과 RSI, MACD를 항상 함께 표시합니다.
+                  </Typography>
+                )}
+              </Stack>
+
+              <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap" useFlexGap>
+                {chartTimeframeOptions.map((option, index) => (
+                  <Stack key={option.value} direction="row" spacing={0.75} alignItems="center">
+                    <Button
+                      size="small"
+                      variant="text"
+                      disableRipple
+                      onClick={() => setChartTimeframe(option.value)}
+                      sx={{
+                        minWidth: 0,
+                        px: 0,
+                        py: 0,
+                        fontSize: 14,
+                        fontWeight: 400,
+                        lineHeight: 1,
+                        color: chartTimeframe === option.value ? '#f8fafc' : '#94a3b8',
+                        textTransform: 'none',
+                        '&:hover': {
+                          bgcolor: 'transparent',
+                          color: '#f8fafc',
+                        },
+                      }}
+                    >
+                      {option.label}
+                    </Button>
+                    {index < chartTimeframeOptions.length - 1 ? (
+                      <Typography sx={{ color: '#475569', fontSize: 13, lineHeight: 1 }}>/</Typography>
+                    ) : null}
+                  </Stack>
                 ))}
-              </Stack>
-              <Divider orientation="vertical" flexItem />
-              <Stack direction="row" spacing={0.5}>
-                <Chip 
-                  label="이평선" 
-                  size="small" 
-                  variant={chartOverlays.ma ? 'filled' : 'outlined'} 
-                  onClick={() => toggleChartOverlay('ma')}
-                  sx={{ cursor: 'pointer' }}
-                />
-                <Chip 
-                  label="거래량" 
-                  size="small" 
-                  variant={chartOverlays.volume ? 'filled' : 'outlined'} 
-                  onClick={() => toggleChartOverlay('volume')}
-                  sx={{ cursor: 'pointer' }}
-                />
-                <Chip 
-                  label="신호" 
-                  size="small" 
-                  variant={chartOverlays.signalMarkers ? 'filled' : 'outlined'} 
+                <Chip
+                  label={chartOverlays.signalMarkers ? '신호 마커 표시' : '신호 마커 숨김'}
+                  size="small"
                   onClick={() => toggleChartOverlay('signalMarkers')}
-                  sx={{ cursor: 'pointer' }}
+                  sx={{
+                    height: 24,
+                    fontSize: 11,
+                    fontWeight: 500,
+                    color: chartOverlays.signalMarkers ? '#f8fafc' : '#94a3b8',
+                    bgcolor: chartOverlays.signalMarkers ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+                    border: '1px solid rgba(255, 255, 255, 0.12)',
+                    cursor: 'pointer',
+                  }}
                 />
               </Stack>
+            </Stack>
+
+            <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+              {activeIndicatorSettings.movingAverages.map((movingAverage) => (
+                <Chip
+                  key={movingAverage.id}
+                  label={`${movingAverage.type.toUpperCase()} ${movingAverage.length}`}
+                  size="small"
+                  sx={neutralIndicatorChipSx}
+                />
+              ))}
+              <Chip
+                label="거래량"
+                size="small"
+                sx={neutralIndicatorChipSx}
+              />
+              <Chip
+                label={`RSI ${activeIndicatorSettings.rsi.length}`}
+                size="small"
+                sx={neutralIndicatorChipSx}
+              />
+              <Chip
+                label={`MACD ${activeIndicatorSettings.macd.fastLength}, ${activeIndicatorSettings.macd.slowLength}, ${activeIndicatorSettings.macd.signalLength}`}
+                size="small"
+                sx={neutralIndicatorChipSx}
+              />
             </Stack>
           </Box>
-          
-          <Box sx={{ flexGrow: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+
+          <Box
+            sx={{
+              flexGrow: 1,
+              minHeight: 0,
+              display: 'flex',
+              alignItems: 'stretch',
+              justifyContent: 'center',
+              position: 'relative',
+              bgcolor: '#0b1120',
+            }}
+          >
             {!activeSymbol ? (
-              <Typography color="text.secondary">차트를 보려면 세션과 심볼을 선택하세요</Typography>
+              <Box sx={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8' }}>
+                <Typography color="inherit">차트를 보려면 세션과 심볼을 선택하세요.</Typography>
+              </Box>
             ) : chartData?.candles?.length ? (
-              <CandlestickChart data={chartData.candles} height={400} />
+              <CandlestickChart
+                key={`${activeSymbol}-${chartTimeframe}-${session?.strategy_version_id ?? 'no-strategy'}`}
+                data={chartData?.candles ?? []}
+                indicatorSettings={activeIndicatorSettings}
+                signals={activeSymbolSignals}
+                showSignalMarkers={chartOverlays.signalMarkers}
+                onMarkerSelect={(signalId) => {
+                  setSelectedSignalId(signalId)
+                  setBottomTab(1)
+                }}
+              />
             ) : (
-              <Box sx={{ textAlign: 'center' }}>
-                <Activity size={32} color={theme.palette.text.disabled} style={{ marginBottom: 8 }} />
-                <Typography color="text.secondary">차트 데이터를 기다리는 중입니다...</Typography>
+              <Box sx={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Box sx={{ textAlign: 'center', color: '#94a3b8' }}>
+                  <Activity size={32} color="#94a3b8" style={{ marginBottom: 8 }} />
+                  <Typography color="inherit">차트 데이터를 기다리는 중입니다...</Typography>
+                </Box>
               </Box>
             )}
           </Box>
         </Card>
 
-        {/* Right Panel - Signals/Positions/Orders */}
-        <Card sx={{ width: 360, display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+        {/* Right Panel - Detail Tabs */}
+        <Card sx={{ width: 440, display: 'flex', flexDirection: 'column', flexShrink: 0, minHeight: 0 }}>
+          <Box sx={{ px: 2, py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
+            <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={2}>
+              <Typography variant="subtitle2" fontWeight={700}>
+                세션 상세
+              </Typography>
+              <EventLogHelpPopover active={bottomTab === 0} />
+            </Stack>
+            <Typography variant="caption" color="text.secondary">
+              {session
+                ? `${activeSessionEntry?.strategyName ?? selectedStrategyGroup?.strategyName ?? '선택된 전략 없음'} · ${session.id.split('-')[0]}`
+                : '선택된 세션 없음'}
+            </Typography>
+          </Box>
           <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
-            <Tabs value={rightTab} onChange={(_, v) => setRightTab(v)} variant="fullWidth" sx={{ minHeight: 40 }}>
+            <Tabs
+              value={bottomTab}
+              onChange={(_, v) => setBottomTab(v)}
+              variant="scrollable"
+              scrollButtons="auto"
+              allowScrollButtonsMobile
+              sx={{ minHeight: 40 }}
+            >
+              <Tab label="이벤트 로그" sx={{ minHeight: 40, py: 1 }} />
+              <Tab label="전략 해설" sx={{ minHeight: 40, py: 1 }} />
               <Tab label="신호" sx={{ minHeight: 40, py: 1 }} />
-              <Tab label="포지션" sx={{ minHeight: 40, py: 1 }} />
               <Tab label="주문" sx={{ minHeight: 40, py: 1 }} />
               <Tab label="리스크" sx={{ minHeight: 40, py: 1 }} />
             </Tabs>
           </Box>
-          
           <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
-            {rightTab === 0 && (
+            {bottomTab === 0 ? (
               <TableContainer>
-                <Table size="small" sx={{ '& .MuiTableCell-root': { py: 1, px: 1.5 } }}>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 11 } }}>
+                      <TableCell>시간</TableCell>
+                      <TableCell>레벨</TableCell>
+                      <TableCell>채널</TableCell>
+                      <TableCell>메시지</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {!eventTimeline.length ? (
+                      <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><Typography color="text.secondary">이벤트 로그가 없습니다</Typography></TableCell></TableRow>
+                    ) : (
+                      eventTimeline.slice(0, 30).map((log) => (
+                        <TableRow
+                          key={`${log.channel}:${log.id}`}
+                          ref={setEventLogRowRef(`${log.channel}:${log.id}`)}
+                          hover
+                          sx={{ '& td': { backgroundColor: 'transparent' } }}
+                        >
+                          <TableCell><Typography variant="caption" color="text.secondary">{formatTime(log.timestamp)}</Typography></TableCell>
+                          <TableCell><Typography variant="caption">{translateLogLevel(String(log.level).toLowerCase())}</Typography></TableCell>
+                          <TableCell><Typography variant="caption">{translateLogChannel(log.channel)}</Typography></TableCell>
+                          <TableCell>
+                            <Stack spacing={0.25}>
+                              <Typography variant="caption">{log.message}</Typography>
+                              <Typography variant="caption" color="text.secondary" fontFamily="monospace">
+                                {log.event_type ?? '-'}
+                              </Typography>
+                            </Stack>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            ) : null}
+
+            {bottomTab === 1 ? (
+              <StrategyExplainPanel
+                signals={orderedSignals}
+                selectedSignalId={selectedSignalId}
+                onSelectSignal={setSelectedSignalId}
+                strategyConfig={activeStrategyConfig}
+              />
+            ) : null}
+
+            {bottomTab === 2 ? (
+              <TableContainer>
+                <Table size="small">
                   <TableHead>
                     <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 11 } }}>
                       <TableCell>시간</TableCell>
@@ -466,265 +1235,137 @@ export default function MonitoringPage() {
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {!signals?.length ? (
-                      <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><Typography variant="body2" color="text.secondary">신호가 없습니다</Typography></TableCell></TableRow>
+                    {!orderedSignals.length ? (
+                      <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><Typography color="text.secondary">신호가 없습니다</Typography></TableCell></TableRow>
                     ) : (
-                      signals.map(sig => {
-                        const actionColor = getActionColor(sig.action)
+                      orderedSignals.map((signal) => {
+                        const isSelected = signal.id === selectedSignalId
+                        const isExplainBlocked = signal.blocked || Boolean(signal.explain_payload?.risk_blocks?.length)
+
                         return (
-                          <TableRow key={sig.id} hover sx={{ bgcolor: sig.blocked ? 'rgba(255, 152, 0, 0.05)' : 'transparent' }}>
-                            <TableCell sx={{ whiteSpace: 'nowrap' }}><Typography variant="caption" color="text.secondary">{formatTime(sig.snapshot_time)}</Typography></TableCell>
-                            <TableCell><Typography variant="caption" fontWeight={600}>{sig.symbol}</Typography></TableCell>
-                            <TableCell>
-                              <Chip 
-                                label={translateSignalAction(sig.action)} 
-                                size="small" 
-                                sx={{ 
-                                  fontSize: 9, 
-                                  height: 16,
-                                  bgcolor: `status.${actionColor}`,
-                                  color: 'white'
-                                }} 
-                              />
-                              {sig.blocked && <Chip label="차단" size="small" color="warning" variant="outlined" sx={{ fontSize: 9, height: 16, ml: 0.5 }} />}
-                            </TableCell>
-                            <TableCell align="right"><Typography variant="caption" sx={{ fontVariantNumeric: 'tabular-nums' }}>{sig.signal_price.toLocaleString()}</Typography></TableCell>
-                          </TableRow>
+                        <TableRow
+                          key={signal.id}
+                          ref={setSignalRowRef(signal.id)}
+                          hover
+                          onClick={() => {
+                            setSelectedSignalId(signal.id)
+                            setBottomTab(1)
+                          }}
+                          sx={{
+                            cursor: 'pointer',
+                            bgcolor: isSelected
+                              ? 'action.hover'
+                              : (isExplainBlocked ? 'rgba(255, 152, 0, 0.05)' : 'transparent'),
+                            '& td': { backgroundColor: 'transparent' },
+                          }}
+                        >
+                          <TableCell><Typography variant="caption" color="text.secondary">{formatTime(signal.snapshot_time)}</Typography></TableCell>
+                          <TableCell><Typography variant="caption" fontWeight={600}>{signal.symbol}</Typography></TableCell>
+                          <TableCell>
+                            <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap">
+                              <StatusText tone={getActionTone(signal.action)}>{translateSignalAction(signal.action)}</StatusText>
+                              {isExplainBlocked ? <StatusText tone="warning">차단</StatusText> : null}
+                            </Stack>
+                          </TableCell>
+                          <TableCell align="right">
+                            <Typography variant="caption" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                              {signal.signal_price?.toLocaleString() ?? '-'}
+                            </Typography>
+                          </TableCell>
+                        </TableRow>
                         )
                       })
                     )}
                   </TableBody>
                 </Table>
               </TableContainer>
-            )}
-            
-            {rightTab === 1 && (
-              <TableContainer>
-                <Table size="small" sx={{ '& .MuiTableCell-root': { py: 1, px: 1.5 } }}>
-                  <TableHead>
-                    <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 11 } }}>
-                      <TableCell>심볼</TableCell>
-                      <TableCell align="right">수량</TableCell>
-                      <TableCell align="right">진입가</TableCell>
-                      <TableCell align="right">손익</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {!positions?.length ? (
-                      <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><Typography variant="body2" color="text.secondary">포지션이 없습니다</Typography></TableCell></TableRow>
-                    ) : (
-                      positions.map(pos => (
-                        <TableRow key={pos.id} hover>
-                          <TableCell>
-                            <Typography variant="caption" fontWeight={600} display="block">{pos.symbol}</Typography>
-                            <Chip 
-                              label={translatePositionState(pos.position_state)} 
-                              size="small" 
-                              sx={{ 
-                                fontSize: 9, 
-                                height: 16,
-                                bgcolor: getPositionStateColor(pos.position_state) === 'default' ? 'action.disabledBackground' : `status.${getPositionStateColor(pos.position_state)}`,
-                                color: getPositionStateColor(pos.position_state) === 'default' ? 'text.secondary' : 'white'
-                              }} 
-                            />
-                          </TableCell>
-                          <TableCell align="right"><Typography variant="caption" sx={{ fontVariantNumeric: 'tabular-nums' }}>{pos.quantity}</Typography></TableCell>
-                          <TableCell align="right"><Typography variant="caption" sx={{ fontVariantNumeric: 'tabular-nums' }}>{pos.avg_entry_price.toLocaleString()}</Typography></TableCell>
-                          <TableCell align="right">
-                            <Typography variant="caption" sx={{ color: pos.unrealized_pnl >= 0 ? 'status.success' : 'status.danger', fontVariantNumeric: 'tabular-nums', display: 'block' }}>
-                              {pos.unrealized_pnl > 0 ? '+' : ''}{pos.unrealized_pnl.toLocaleString()}
-                            </Typography>
-                            <Typography variant="caption" sx={{ color: pos.unrealized_pnl_pct >= 0 ? 'status.success' : 'status.danger', fontVariantNumeric: 'tabular-nums' }}>
-                              {pos.unrealized_pnl_pct > 0 ? '+' : ''}{pos.unrealized_pnl_pct.toFixed(2)}%
-                            </Typography>
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            )}
+            ) : null}
 
-            {rightTab === 2 && (
+            {bottomTab === 3 ? (
               <TableContainer>
-                <Table size="small" sx={{ '& .MuiTableCell-root': { py: 1, px: 1.5 } }}>
+                <Table size="small">
                   <TableHead>
                     <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 11 } }}>
                       <TableCell>시간</TableCell>
-                      <TableCell>심볼</TableCell>
-                      <TableCell>유형</TableCell>
-                      <TableCell align="right">가격</TableCell>
+                      <TableCell>역할</TableCell>
+                      <TableCell>상태</TableCell>
+                      <TableCell align="right">수량</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {!orders?.length ? (
-                      <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><Typography variant="body2" color="text.secondary">주문이 없습니다</Typography></TableCell></TableRow>
+                      <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><Typography color="text.secondary">주문이 없습니다</Typography></TableCell></TableRow>
                     ) : (
-                      orders.map(ord => (
-                        <TableRow key={ord.id} hover>
-                          <TableCell sx={{ whiteSpace: 'nowrap' }}><Typography variant="caption" color="text.secondary">{formatTime(ord.submitted_at)}</Typography></TableCell>
-                          <TableCell><Typography variant="caption" fontWeight={600}>{ord.symbol}</Typography></TableCell>
-                          <TableCell>
-                            <Typography variant="caption" display="block">{ord.order_type === 'MARKET' ? '시장가' : ord.order_type === 'LIMIT' ? '지정가' : ord.order_type}</Typography>
-                            <Chip 
-                              label={translateOrderState(ord.order_state)} 
-                              size="small" 
-                              sx={{ 
-                                fontSize: 9, 
-                                height: 16,
-                                bgcolor: getOrderStateColor(ord.order_state) === 'default' ? 'action.disabledBackground' : `status.${getOrderStateColor(ord.order_state)}`,
-                                color: getOrderStateColor(ord.order_state) === 'default' ? 'text.secondary' : 'white'
-                              }} 
-                            />
-                          </TableCell>
-                          <TableCell align="right">
-                            <Typography variant="caption" sx={{ fontVariantNumeric: 'tabular-nums', display: 'block' }}>
-                              {ord.executed_price ? ord.executed_price.toLocaleString() : (ord.requested_price ? ord.requested_price.toLocaleString() : '시장가')}
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                              {ord.executed_qty}/{ord.requested_qty}
-                            </Typography>
-                          </TableCell>
+                      orders.map((order) => (
+                        <TableRow
+                          key={order.id}
+                          ref={setOrderRowRef(order.id)}
+                          hover
+                          sx={{ '& td': { backgroundColor: 'transparent' } }}
+                        >
+                          <TableCell><Typography variant="caption" color="text.secondary">{formatTime(order.submitted_at)}</Typography></TableCell>
+                          <TableCell><Typography variant="caption">{translateOrderRole(order.order_role)}</Typography></TableCell>
+                          <TableCell><Typography variant="caption">{translateOrderState(order.order_state)}</Typography></TableCell>
+                          <TableCell align="right"><Typography variant="caption">{order.executed_qty}/{order.requested_qty}</Typography></TableCell>
                         </TableRow>
                       ))
                     )}
                   </TableBody>
                 </Table>
               </TableContainer>
-            )}
+            ) : null}
 
-            {rightTab === 3 && (
+            {bottomTab === 4 ? (
               <TableContainer>
-                <Table size="small" sx={{ '& .MuiTableCell-root': { py: 1, px: 1.5 } }}>
+                <Table size="small">
                   <TableHead>
                     <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 11 } }}>
                       <TableCell>시간</TableCell>
-                      <TableCell>코드</TableCell>
                       <TableCell>심각도</TableCell>
+                      <TableCell>코드</TableCell>
+                      <TableCell>메시지</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {!riskEvents?.length ? (
-                      <TableRow><TableCell colSpan={3} align="center" sx={{ py: 4 }}><Typography variant="body2" color="text.secondary">리스크 이벤트가 없습니다</Typography></TableCell></TableRow>
+                      <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><Typography color="text.secondary">리스크 이벤트가 없습니다</Typography></TableCell></TableRow>
                     ) : (
                       riskEvents.map((event) => (
-                        <TableRow key={event.id} hover>
-                          <TableCell><Typography variant="caption" color="text.secondary">{formatTime(event.created_at)}</Typography></TableCell>
-                          <TableCell><Typography variant="caption" fontFamily="monospace">{event.code}</Typography></TableCell>
-                          <TableCell><Chip label={translateSeverity(event.severity)} size="small" color={event.severity === 'WARN' ? 'warning' : 'error'} /></TableCell>
+                        <TableRow
+                          key={event.id}
+                          ref={setRiskRowRef(event.id)}
+                          hover
+                          sx={{ '& td': { backgroundColor: 'transparent' } }}
+                        >
+                          <TableCell>
+                            <Typography variant="caption" color="text.secondary">
+                              {formatTime(event.created_at)}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <StatusText tone={event.severity === 'WARN' ? 'warning' : 'danger'}>
+                              {event.severity}
+                            </StatusText>
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="caption" fontFamily="monospace">
+                              {event.code}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="caption">{event.message}</Typography>
+                          </TableCell>
                         </TableRow>
                       ))
                     )}
                   </TableBody>
                 </Table>
               </TableContainer>
-            )}
+            ) : null}
           </Box>
         </Card>
       </Box>
 
-      {/* Bottom Tabs */}
-      <Card sx={{ height: 200, flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
-        <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
-          <Tabs value={bottomTab} onChange={(_, v) => setBottomTab(v)} sx={{ minHeight: 40 }}>
-            <Tab label="이벤트 로그" sx={{ minHeight: 40, py: 1 }} />
-            <Tab label="전략 해설" sx={{ minHeight: 40, py: 1 }} />
-            <Tab label="주문 타임라인" sx={{ minHeight: 40, py: 1 }} />
-            <Tab label="리스크 이벤트" sx={{ minHeight: 40, py: 1 }} />
-          </Tabs>
-        </Box>
-        <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
-          {bottomTab === 0 ? (
-            <TableContainer>
-              <Table size="small">
-                <TableHead>
-                  <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 11 } }}>
-                    <TableCell>시간</TableCell>
-                    <TableCell>유형</TableCell>
-                    <TableCell>메시지</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {!eventLogs?.length ? (
-                    <TableRow><TableCell colSpan={3} align="center" sx={{ py: 4 }}><Typography color="text.secondary">이벤트 로그가 없습니다</Typography></TableCell></TableRow>
-                  ) : (
-                    eventLogs.slice(0, 20).map((log) => (
-                      <TableRow key={log.id} hover>
-                        <TableCell><Typography variant="caption" color="text.secondary">{formatTime(log.timestamp)}</Typography></TableCell>
-                        <TableCell><Typography variant="caption" fontFamily="monospace">{log.event_type ?? '-'}</Typography></TableCell>
-                        <TableCell><Typography variant="caption">{log.message}</Typography></TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          ) : null}
-
-          {bottomTab === 1 ? (
-            <Stack spacing={1.5} sx={{ p: 2 }}>
-              {!signals?.length ? (
-                <Typography color="text.secondary">아직 신호가 없습니다.</Typography>
-              ) : (
-                signals.slice(0, 5).map((signal) => (
-                  <Card key={signal.id} variant="outlined">
-                    <Box sx={{ p: 1.5 }}>
-                      <Typography variant="body2" fontWeight={600}>{signal.symbol} · {translateSignalAction(signal.action)}</Typography>
-                      <Typography variant="caption" color="text.secondary" display="block">
-                        {signal.reason_codes.join(', ') || '설명 정보 없음'}
-                      </Typography>
-                    </Box>
-                  </Card>
-                ))
-              )}
-            </Stack>
-          ) : null}
-
-          {bottomTab === 2 ? (
-            <TableContainer>
-              <Table size="small">
-                <TableHead>
-                  <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 11 } }}>
-                    <TableCell>시간</TableCell>
-                    <TableCell>역할</TableCell>
-                    <TableCell>상태</TableCell>
-                    <TableCell align="right">수량</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {!orders?.length ? (
-                    <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><Typography color="text.secondary">주문이 없습니다</Typography></TableCell></TableRow>
-                  ) : (
-                    orders.map((order) => (
-                      <TableRow key={order.id} hover>
-                        <TableCell><Typography variant="caption" color="text.secondary">{formatTime(order.submitted_at)}</Typography></TableCell>
-                        <TableCell><Typography variant="caption">{translateOrderRole(order.order_role)}</Typography></TableCell>
-                        <TableCell><Typography variant="caption">{translateOrderState(order.order_state)}</Typography></TableCell>
-                        <TableCell align="right"><Typography variant="caption">{order.executed_qty}/{order.requested_qty}</Typography></TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          ) : null}
-
-          {bottomTab === 3 ? (
-            <Stack spacing={1.5} sx={{ p: 2 }}>
-              {!riskEvents?.length ? (
-                <Typography color="text.secondary">리스크 이벤트가 없습니다.</Typography>
-              ) : (
-                riskEvents.map((event) => (
-                  <Alert key={event.id} severity={event.severity === 'WARN' ? 'warning' : 'error'}>
-                    [{event.code}] {event.message}
-                  </Alert>
-                ))
-              )}
-            </Stack>
-          ) : null}
-        </Box>
-      </Card>
     </Box>
   )
 }

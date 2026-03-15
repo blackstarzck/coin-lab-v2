@@ -1,7 +1,24 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '@/shared/api/client'
-import type { Session, Position, Order, Signal, RiskEvent, Performance } from '@/entities/session/types'
+import type { Session, Position, Order, Signal, RiskEvent, Performance, SessionReevaluateResult } from '@/entities/session/types'
 import type { ApiResponse } from '@/shared/types/api'
+import { logKeys } from '@/features/logs/api'
+import { monitoringKeys } from '@/features/monitoring/api'
+
+interface LiveQueryOptions {
+  refetchIntervalMs?: number
+  enabled?: boolean
+}
+
+function withLiveRefresh(refetchIntervalMs?: number): {
+  refetchInterval: number | false
+  refetchIntervalInBackground: boolean
+} {
+  return {
+    refetchInterval: refetchIntervalMs ?? false,
+    refetchIntervalInBackground: Boolean(refetchIntervalMs),
+  }
+}
 
 export const sessionKeys = {
   all: ['sessions'] as const,
@@ -16,24 +33,27 @@ export const sessionKeys = {
   performance: (id: string) => [...sessionKeys.detail(id), 'performance'] as const,
 }
 
-export function useSessions() {
+export function useSessions(options?: LiveQueryOptions) {
   return useQuery({
     queryKey: sessionKeys.lists(),
     queryFn: async () => {
       const data = await apiClient.get<unknown, ApiResponse<Session[]>>('/sessions')
       return data.data
     },
+    enabled: options?.enabled ?? true,
+    ...withLiveRefresh(options?.refetchIntervalMs),
   })
 }
 
-export function useSession(id: string) {
+export function useSession(id: string, options?: LiveQueryOptions) {
   return useQuery({
     queryKey: sessionKeys.detail(id),
     queryFn: async () => {
       const data = await apiClient.get<unknown, ApiResponse<Session>>(`/sessions/${id}`)
       return data.data
     },
-    enabled: !!id,
+    enabled: Boolean(id) && (options?.enabled ?? true),
+    ...withLiveRefresh(options?.refetchIntervalMs),
   })
 }
 
@@ -89,57 +109,91 @@ export function useKillSession() {
   })
 }
 
-export function useSessionPositions(id: string) {
+export function useReevaluateSession() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async ({
+      id,
+      symbols,
+    }: {
+      id: string
+      symbols?: string[]
+    }) => {
+      const response = await apiClient.post<unknown, ApiResponse<SessionReevaluateResult>>(`/sessions/${id}/reevaluate`, {
+        symbols: symbols ?? [],
+      })
+      return response.data
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: monitoringKeys.all })
+      queryClient.invalidateQueries({ queryKey: sessionKeys.lists() })
+      queryClient.invalidateQueries({ queryKey: sessionKeys.detail(variables.id) })
+      queryClient.invalidateQueries({ queryKey: sessionKeys.positions(variables.id) })
+      queryClient.invalidateQueries({ queryKey: sessionKeys.orders(variables.id) })
+      queryClient.invalidateQueries({ queryKey: sessionKeys.signals(variables.id) })
+      queryClient.invalidateQueries({ queryKey: sessionKeys.riskEvents(variables.id) })
+      queryClient.invalidateQueries({ queryKey: sessionKeys.performance(variables.id) })
+      queryClient.invalidateQueries({ queryKey: logKeys.all })
+    },
+  })
+}
+
+export function useSessionPositions(id: string, options?: LiveQueryOptions) {
   return useQuery({
     queryKey: sessionKeys.positions(id),
     queryFn: async () => {
       const data = await apiClient.get<unknown, ApiResponse<Position[]>>(`/sessions/${id}/positions`)
       return data.data
     },
-    enabled: !!id,
+    enabled: Boolean(id) && (options?.enabled ?? true),
+    ...withLiveRefresh(options?.refetchIntervalMs),
   })
 }
 
-export function useSessionOrders(id: string) {
+export function useSessionOrders(id: string, options?: LiveQueryOptions) {
   return useQuery({
     queryKey: sessionKeys.orders(id),
     queryFn: async () => {
       const data = await apiClient.get<unknown, ApiResponse<Order[]>>(`/sessions/${id}/orders`)
       return data.data
     },
-    enabled: !!id,
+    enabled: Boolean(id) && (options?.enabled ?? true),
+    ...withLiveRefresh(options?.refetchIntervalMs),
   })
 }
 
-export function useSessionSignals(id: string) {
+export function useSessionSignals(id: string, options?: LiveQueryOptions) {
   return useQuery({
     queryKey: sessionKeys.signals(id),
     queryFn: async () => {
       const data = await apiClient.get<unknown, ApiResponse<Signal[]>>(`/sessions/${id}/signals`)
       return data.data
     },
-    enabled: !!id,
+    enabled: Boolean(id) && (options?.enabled ?? true),
+    ...withLiveRefresh(options?.refetchIntervalMs),
   })
 }
 
-export function useSessionRiskEvents(id: string) {
+export function useSessionRiskEvents(id: string, options?: LiveQueryOptions) {
   return useQuery({
     queryKey: sessionKeys.riskEvents(id),
     queryFn: async () => {
       const data = await apiClient.get<unknown, ApiResponse<RiskEvent[]>>(`/sessions/${id}/risk-events`)
       return data.data
     },
-    enabled: !!id,
+    enabled: Boolean(id) && (options?.enabled ?? true),
+    ...withLiveRefresh(options?.refetchIntervalMs),
   })
 }
 
-export function useSessionPerformance(id: string) {
+export function useSessionPerformance(id: string, options?: LiveQueryOptions) {
   return useQuery({
     queryKey: sessionKeys.performance(id),
     queryFn: async () => {
       const data = await apiClient.get<unknown, ApiResponse<Performance>>(`/sessions/${id}/performance`)
       return data.data
     },
-    enabled: !!id,
+    enabled: Boolean(id) && (options?.enabled ?? true),
+    ...withLiveRefresh(options?.refetchIntervalMs),
   })
 }

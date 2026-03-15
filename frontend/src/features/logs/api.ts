@@ -21,6 +21,11 @@ interface LogEntryApiResponse {
   logged_at: string
 }
 
+interface LogQueryOptions {
+  refetchIntervalMs?: number
+  enabled?: boolean
+}
+
 export const logKeys = {
   all: ['logs'] as const,
   list: (channel: LogChannel, sessionId?: string) => [...logKeys.all, channel, sessionId ?? 'all'] as const,
@@ -43,7 +48,7 @@ function mapLogEntry(entry: LogEntryApiResponse): LogEntry {
   }
 }
 
-export function useLogs(channel: LogChannel, sessionId?: string, limit = 50) {
+export function useLogs(channel: LogChannel, sessionId?: string, limit = 50, options?: LogQueryOptions) {
   return useQuery({
     queryKey: logKeys.list(channel, sessionId),
     queryFn: async () => {
@@ -55,5 +60,8 @@ export function useLogs(channel: LogChannel, sessionId?: string, limit = 50) {
       })
       return response.data.map(mapLogEntry)
     },
+    enabled: options?.enabled ?? true,
+    refetchInterval: options?.refetchIntervalMs ?? false,
+    refetchIntervalInBackground: Boolean(options?.refetchIntervalMs),
   })
 }

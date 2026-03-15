@@ -1,4 +1,5 @@
 // Session entity types aligned with API_PAYLOADS.md
+import type { ExplainPayload } from '@/entities/strategy/dsl-types';
 
 export type ExecutionMode = 'BACKTEST' | 'PAPER' | 'LIVE';
 export type SessionStatus = 'PENDING' | 'RUNNING' | 'STOPPING' | 'STOPPED' | 'FAILED';
@@ -58,6 +59,7 @@ export interface Signal {
   reason_codes: string[];
   snapshot_time: string;
   blocked: boolean;
+  explain_payload?: ExplainPayload | null;
 }
 
 export interface Position {
@@ -113,4 +115,16 @@ export interface Performance {
   trade_count: number;
   win_rate_pct: number;
   max_drawdown_pct: number;
+}
+
+export interface SessionReevaluateResult {
+  accepted: boolean;
+  session_id: string;
+  requested_symbols: string[];
+  evaluated_symbols: string[];
+  skipped: Array<{
+    symbol: string | null;
+    reason_code: string;
+    reason_detail: string;
+  }>;
 }

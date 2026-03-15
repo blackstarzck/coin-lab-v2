@@ -1,4 +1,4 @@
-import { createTheme } from '@mui/material/styles'
+import { alpha, createTheme } from '@mui/material/styles'
 import freesentationRegular from '@/assets/fonts/Freesentation-4Regular.ttf'
 import freesentationMedium from '@/assets/fonts/Freesentation-5Medium.ttf'
 import freesentationSemiBold from '@/assets/fonts/Freesentation-6SemiBold.ttf'
@@ -140,6 +140,51 @@ const colors = {
 }
 
 const appFontFamily = '"Freesentation", "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif'
+const fontFaces = `
+  @font-face {
+    font-family: 'Freesentation';
+    src: url(${freesentationRegular}) format('truetype');
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+  }
+
+  @font-face {
+    font-family: 'Freesentation';
+    src: url(${freesentationMedium}) format('truetype');
+    font-weight: 500;
+    font-style: normal;
+    font-display: swap;
+  }
+
+  @font-face {
+    font-family: 'Freesentation';
+    src: url(${freesentationSemiBold}) format('truetype');
+    font-weight: 600;
+    font-style: normal;
+    font-display: swap;
+  }
+
+  @font-face {
+    font-family: 'Freesentation';
+    src: url(${freesentationBold}) format('truetype');
+    font-weight: 700;
+    font-style: normal;
+    font-display: swap;
+  }
+`
+
+const createFilledChipStyles = (color: string) => ({
+  backgroundColor: alpha(color, 0.14),
+  color,
+  boxShadow: `inset 0 0 0 1px ${alpha(color, 0.06)}`,
+})
+
+const createOutlinedChipStyles = (color: string) => ({
+  backgroundColor: alpha(color, 0.08),
+  borderColor: alpha(color, 0.24),
+  color,
+})
 
 export const theme = createTheme({
   palette: {
@@ -206,66 +251,48 @@ export const theme = createTheme({
   },
   components: {
     MuiCssBaseline: {
-      styleOverrides: {
-        '@font-face': [
-          {
-            fontFamily: 'Freesentation',
-            src: `url(${freesentationRegular}) format('truetype')`,
-            fontWeight: 400,
-            fontStyle: 'normal',
-            fontDisplay: 'swap',
-          },
-          {
-            fontFamily: 'Freesentation',
-            src: `url(${freesentationMedium}) format('truetype')`,
-            fontWeight: 500,
-            fontStyle: 'normal',
-            fontDisplay: 'swap',
-          },
-          {
-            fontFamily: 'Freesentation',
-            src: `url(${freesentationSemiBold}) format('truetype')`,
-            fontWeight: 600,
-            fontStyle: 'normal',
-            fontDisplay: 'swap',
-          },
-          {
-            fontFamily: 'Freesentation',
-            src: `url(${freesentationBold}) format('truetype')`,
-            fontWeight: 700,
-            fontStyle: 'normal',
-            fontDisplay: 'swap',
-          },
-        ],
-        html: {
-          fontFamily: appFontFamily,
-        },
-        body: {
-          backgroundColor: colors.bg.canvas,
-          color: colors.text.primary,
-          fontFamily: appFontFamily,
-        },
-        'input, button, textarea, select': {
-          fontFamily: appFontFamily,
-        },
-        '*': {
-          boxSizing: 'border-box',
-        },
-        '::-webkit-scrollbar': {
-          width: '8px',
-          height: '8px',
-        },
-        '::-webkit-scrollbar-track': {
-          background: 'transparent',
-        },
-        '::-webkit-scrollbar-thumb': {
-          background: colors.border.strong,
-          borderRadius: '4px',
-        },
-        '::-webkit-scrollbar-thumb:hover': {
-          background: colors.text.disabled,
-        },
-      },
+      styleOverrides: `
+        ${fontFaces}
+
+        html {
+          font-family: ${appFontFamily};
+        }
+
+        body {
+          background-color: ${colors.bg.canvas};
+          color: ${colors.text.primary};
+          font-family: ${appFontFamily};
+        }
+
+        input,
+        button,
+        textarea,
+        select {
+          font-family: ${appFontFamily};
+        }
+
+        * {
+          box-sizing: border-box;
+        }
+
+        ::-webkit-scrollbar {
+          width: 8px;
+          height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+          background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+          background: ${colors.border.strong};
+          border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+          background: ${colors.text.disabled};
+        }
+      `,
     },
     MuiCard: {
       styleOverrides: {
@@ -332,9 +359,62 @@ export const theme = createTheme({
       styleOverrides: {
         root: {
           borderRadius: 999,
-          fontWeight: 500,
+          fontWeight: 600,
+          letterSpacing: '-0.01em',
+          '& .MuiChip-icon': {
+            color: 'inherit',
+          },
         },
       },
+      variants: [
+        {
+          props: { variant: 'filled' },
+          style: {
+            backgroundColor: alpha(colors.text.primary, 0.08),
+            color: colors.text.primary,
+          },
+        },
+        {
+          props: { variant: 'filled', color: 'success' },
+          style: createFilledChipStyles(colors.status.success),
+        },
+        {
+          props: { variant: 'filled', color: 'error' },
+          style: createFilledChipStyles(colors.status.danger),
+        },
+        {
+          props: { variant: 'filled', color: 'warning' },
+          style: createFilledChipStyles(colors.status.warning),
+        },
+        {
+          props: { variant: 'filled', color: 'info' },
+          style: createFilledChipStyles(colors.status.info),
+        },
+        {
+          props: { variant: 'outlined' },
+          style: {
+            backgroundColor: alpha(colors.text.primary, 0.04),
+            borderColor: colors.border.default,
+            color: colors.text.secondary,
+          },
+        },
+        {
+          props: { variant: 'outlined', color: 'success' },
+          style: createOutlinedChipStyles(colors.status.success),
+        },
+        {
+          props: { variant: 'outlined', color: 'error' },
+          style: createOutlinedChipStyles(colors.status.danger),
+        },
+        {
+          props: { variant: 'outlined', color: 'warning' },
+          style: createOutlinedChipStyles(colors.status.warning),
+        },
+        {
+          props: { variant: 'outlined', color: 'info' },
+          style: createOutlinedChipStyles(colors.status.info),
+        },
+      ],
     },
     MuiTableCell: {
       styleOverrides: {

@@ -17,7 +17,7 @@ interface ChartPointMessage {
 }
 
 type ChartStreamMessage = ChartSnapshotMessage | ChartPointMessage
-const shouldLogChartSocket = import.meta.env.DEV
+const shouldLogChartSocket = import.meta.env.DEV && import.meta.env.VITE_DEBUG_WS === 'true'
 
 function toWebSocketUrl(baseUrl: string, symbol: string, timeframe: string): string {
   const resolvedBaseUrl = baseUrl || window.location.origin
@@ -44,11 +44,19 @@ export function useChartStream(symbol: string | null, timeframe: string) {
       return
     }
 
+    startTransition(() => {
+      setData(null)
+      setIsConnected(false)
+    })
+
     const ws = new WebSocket(toWebSocketUrl(env.API_BASE_URL, symbol, timeframe))
     let closeInitiator: 'remote' | 'effect-cleanup' = 'remote'
     websocketRef.current = ws
 
     ws.onopen = () => {
+      if (websocketRef.current !== ws) {
+        return
+      }
       if (shouldLogChartSocket) {
         console.info('[chart-ws] open', { symbol, timeframe, url: ws.url })
       }
@@ -58,6 +66,9 @@ export function useChartStream(symbol: string | null, timeframe: string) {
     }
 
     ws.onmessage = (event) => {
+      if (websocketRef.current !== ws) {
+        return
+      }
       const message = JSON.parse(event.data) as ChartStreamMessage
       startTransition(() => {
         setData((prev) => {
@@ -92,6 +103,9 @@ export function useChartStream(symbol: string | null, timeframe: string) {
     }
 
     ws.onerror = () => {
+      if (websocketRef.current !== ws) {
+        return
+      }
       if (shouldLogChartSocket) {
         console.warn('[chart-ws] error', {
           symbol,
@@ -106,6 +120,9 @@ export function useChartStream(symbol: string | null, timeframe: string) {
     }
 
     ws.onclose = (event) => {
+      if (websocketRef.current !== ws && closeInitiator === 'remote') {
+        return
+      }
       if (shouldLogChartSocket) {
         console.info('[chart-ws] close', {
           symbol,
