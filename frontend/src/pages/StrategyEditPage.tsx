@@ -1,5 +1,5 @@
 import { useDeferredValue, useEffect, useMemo, useState } from 'react'
-import type { ChangeEvent, ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   Alert,
@@ -20,6 +20,7 @@ import {
   Tab,
   Tabs,
   TextField,
+  Tooltip,
   Typography,
 } from '@mui/material'
 import { ArrowLeft, Save, X } from 'lucide-react'
@@ -38,7 +39,7 @@ import { useUniverseCatalog } from '@/features/universe/api'
 import { ConditionEditor, defaultConditionNode } from '@/features/strategies/ConditionEditor'
 import { createDefaultStrategyConfig, DEFAULT_STRATEGY_NAME } from '@/features/strategies/defaultStrategyConfig'
 import type { Strategy, StrategyVersion, ValidationResult } from '@/entities/strategy/types'
-import { translateStrategyType } from '@/shared/lib/i18n'
+import { MuiNumberField } from '@/shared/ui/MuiNumberField'
 
 type JsonObject = Record<string, unknown>
 const DEFAULT_STRATEGY_SYMBOLS = ['KRW-BTC']
@@ -57,6 +58,23 @@ const DEFAULT_BACKTEST_CONFIG: JsonObject = {
   latency_ms: 200,
   fill_assumption: 'next_bar_open',
 }
+const STRATEGY_TYPE_OPTIONS = [
+  {
+    value: 'dsl',
+    label: '규칙식',
+    description: '조건 편집기에서 진입과 청산 규칙을 직접 조합하는 기본 전략 유형입니다.',
+  },
+  {
+    value: 'plugin',
+    label: '플러그인',
+    description: '코드로 구현된 전략 로직을 연결해 실행하는 유형입니다.',
+  },
+  {
+    value: 'hybrid',
+    label: '하이브리드',
+    description: '규칙식 설정과 플러그인 로직을 함께 사용하는 혼합형 전략 유형입니다.',
+  },
+] as const
 
 interface DiffRow {
   path: string
@@ -96,29 +114,27 @@ function sortSymbols(symbols: string[]): string[] {
 
 function formatTurnoverLabel(value: number | null | undefined): string {
   if (!value) {
-    return '24h 거래대금 정보 없음'
+    return '24시간 거래대금 정보 없음'
   }
   if (value >= 1_000_000_000_000) {
-    return `24h 거래대금 ${(value / 1_000_000_000_000).toFixed(2)}조 KRW`
+    return `24시간 거래대금 ${(value / 1_000_000_000_000).toFixed(2)}조 원`
   }
   if (value >= 100_000_000) {
-    return `24h 거래대금 ${(value / 100_000_000).toFixed(1)}억 KRW`
+    return `24시간 거래대금 ${(value / 100_000_000).toFixed(1)}억 원`
   }
-  return `24h 거래대금 ${Math.round(value).toLocaleString('ko-KR')} KRW`
+  return `24시간 거래대금 ${Math.round(value).toLocaleString('ko-KR')}원`
 }
 
 function asNumber(value: unknown, fallback = 0): number {
   return typeof value === 'number' ? value : fallback
 }
 
-function parseNumberInput(value: string, fallback = 0): number {
-  const parsed = Number.parseFloat(value)
-  return Number.isFinite(parsed) ? parsed : fallback
+function coerceNumberValue(value: number | null, fallback = 0): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
-function parseIntegerInput(value: string, fallback = 0): number {
-  const parsed = Number.parseInt(value, 10)
-  return Number.isFinite(parsed) ? parsed : fallback
+function coerceIntegerValue(value: number | null, fallback = 0): number {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : fallback
 }
 
 function updateNestedConfig(config: JsonObject, path: string[], value: unknown): JsonObject {
@@ -220,6 +236,12 @@ function TabPanel({ children, value, index }: { children?: ReactNode, value: num
   )
 }
 
+const CONDITION_TAB_CONTENT_SX = {
+  width: '100%',
+  maxWidth: 1240,
+  mr: 'auto',
+} as const
+
 function StrategyEditForm({
   mode,
   strategy,
@@ -269,6 +291,23 @@ function StrategyEditForm({
     () => buildDiffRows(normalizedInitialConfig, configJson),
     [normalizedInitialConfig, configJson],
   )
+  const strategyTypeHelpTooltip = (
+    <Stack spacing={1.1} sx={{ maxWidth: 300, py: 0.25 }}>
+      <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+        전략 유형 안내
+      </Typography>
+      {STRATEGY_TYPE_OPTIONS.map((option) => (
+        <Box key={option.value}>
+          <Typography variant="body2" sx={{ fontWeight: 700, lineHeight: 1.35 }}>
+            {option.label}
+          </Typography>
+          <Typography variant="caption" sx={{ display: 'block', color: 'rgba(255, 255, 255, 0.74)', lineHeight: 1.45 }}>
+            {option.description}
+          </Typography>
+        </Box>
+      ))}
+    </Stack>
+  )
 
   const market = asObject(configJson.market)
   const universe = asObject(configJson.universe)
@@ -292,12 +331,12 @@ function StrategyEditForm({
     setConfigJson((prev) => updateNestedConfig(prev, path, value))
   }
 
-  const updateIntegerAtPath = (path: string[], fallback = 0) => (event: ChangeEvent<HTMLInputElement>) => {
-    updateConfigAtPath(path, parseIntegerInput(event.target.value, fallback))
+  const updateIntegerAtPath = (path: string[], fallback = 0) => (value: number | null) => {
+    updateConfigAtPath(path, coerceIntegerValue(value, fallback))
   }
 
-  const updateNumberAtPath = (path: string[], fallback = 0) => (event: ChangeEvent<HTMLInputElement>) => {
-    updateConfigAtPath(path, parseNumberInput(event.target.value, fallback))
+  const updateNumberAtPath = (path: string[], fallback = 0) => (value: number | null) => {
+    updateConfigAtPath(path, coerceNumberValue(value, fallback))
   }
 
   const handleAddCatalogSymbol = (symbol: string) => {
@@ -436,7 +475,7 @@ function StrategyEditForm({
           <Tab label="실행" />
           <Tab label="백테스트" />
           <Tab label={`변경 미리보기 (${diffRows.length})`} />
-          <Tab label="JSON 편집기" />
+          <Tab label="원본 설정 편집기" />
           <Tab label={validationResult?.valid ? '검증 완료' : '검증'} />
         </Tabs>
 
@@ -447,7 +486,7 @@ function StrategyEditForm({
                 label="전략 키"
                 value={strategyKey}
                 onChange={(event) => updateConfigAtPath(['id'], event.target.value)}
-                helperText={mode === 'create' ? '전략 키는 DSL id와 전략 식별자로 함께 사용됩니다.' : '기존 전략 키는 생성 이후 변경하지 않습니다.'}
+                helperText={mode === 'create' ? '전략 키는 전략 규칙 식별자와 전략 식별자로 함께 사용됩니다.' : '기존 전략 키는 생성 이후 변경하지 않습니다.'}
                 disabled={mode === 'edit'}
                 fullWidth
               />
@@ -456,15 +495,30 @@ function StrategyEditForm({
               <TextField label="라벨 (쉼표로 구분)" value={labelsText} onChange={(event) => setLabelsText(event.target.value)} fullWidth />
               <TextField label="버전 노트" value={notes} onChange={(event) => setNotes(event.target.value)} multiline rows={3} fullWidth />
               <FormControl fullWidth disabled={mode === 'edit'}>
-                <InputLabel>전략 유형</InputLabel>
+                <Tooltip
+                  arrow
+                  placement="top-start"
+                  title={strategyTypeHelpTooltip}
+                  slotProps={{
+                    tooltip: {
+                      sx: {
+                        maxWidth: 340,
+                      },
+                    },
+                  }}
+                >
+                  <InputLabel sx={{ pointerEvents: 'auto', cursor: 'help' }}>전략 유형</InputLabel>
+                </Tooltip>
                 <Select
                   value={strategyType}
                   label="전략 유형"
                   onChange={(event) => updateConfigAtPath(['type'], event.target.value)}
                 >
-                  <MenuItem value="dsl">{translateStrategyType('dsl')}</MenuItem>
-                  <MenuItem value="plugin">{translateStrategyType('plugin')}</MenuItem>
-                  <MenuItem value="hybrid">{translateStrategyType('hybrid')}</MenuItem>
+                  {STRATEGY_TYPE_OPTIONS.map((option) => (
+                    <MenuItem key={option.value} value={option.value}>
+                      {option.label}
+                    </MenuItem>
+                  ))}
                 </Select>
               </FormControl>
             </Stack>
@@ -476,7 +530,7 @@ function StrategyEditForm({
                 <FormControl fullWidth>
                   <InputLabel>거래소</InputLabel>
                   <Select value={String(market.exchange ?? 'UPBIT')} label="거래소" onChange={(event) => updateConfigAtPath(['market', 'exchange'], event.target.value)}>
-                    <MenuItem value="UPBIT">Upbit</MenuItem>
+                    <MenuItem value="UPBIT">업비트</MenuItem>
                   </Select>
                 </FormControl>
               </Grid>
@@ -690,12 +744,12 @@ function StrategyEditForm({
           </TabPanel>
 
           <TabPanel value={tabValue} index={2}>
-            <Stack spacing={2} maxWidth={920} sx={{ width: '100%', mx: 'auto' }}>
+            <Stack spacing={2} sx={CONDITION_TAB_CONTENT_SX}>
               <Typography variant="body2" color="text.secondary">
-                진입 조건을 구조적으로 편집합니다. 계산에 쓰이는 indicator, lookback, threshold 파라미터를 여기서 직접 설정할 수 있습니다.
+                진입 조건을 구조적으로 편집합니다. 계산에 쓰이는 지표, 조회 봉 수, 기준값 파라미터를 여기서 직접 설정할 수 있습니다.
               </Typography>
               <ConditionEditor
-                label="Entry"
+                label="진입 조건"
                 value={asObject(configJson.entry).logic || asObject(configJson.entry).type ? asObject(configJson.entry) : defaultConditionNode()}
                 onChange={(next) => setConfigJson((prev) => updateNestedConfig(prev, ['entry'], next))}
               />
@@ -703,7 +757,7 @@ function StrategyEditForm({
           </TabPanel>
 
           <TabPanel value={tabValue} index={3}>
-            <Stack spacing={2} maxWidth={920} sx={{ width: '100%', mx: 'auto' }}>
+            <Stack spacing={2} sx={CONDITION_TAB_CONTENT_SX}>
               <Grid container spacing={2}>
                 <Grid item xs={12} sm={4}>
                   <FormControlLabel
@@ -717,12 +771,12 @@ function StrategyEditForm({
                   />
                 </Grid>
                 <Grid item xs={12} sm={4}>
-                  <TextField
-                    label="Cooldown Bars"
-                    type="number"
+                  <MuiNumberField
+                    label="재진입 대기 봉 수"
                     fullWidth
                     value={asNumber(reentry.cooldown_bars, 0)}
-                    onChange={updateIntegerAtPath(['reentry', 'cooldown_bars'], 0)}
+                    onValueChange={updateIntegerAtPath(['reentry', 'cooldown_bars'], 0)}
+                    step={1}
                   />
                 </Grid>
                 <Grid item xs={12} sm={4}>
@@ -733,13 +787,13 @@ function StrategyEditForm({
                         onChange={(event) => updateConfigAtPath(['reentry', 'require_reset'], event.target.checked)}
                       />
                     )}
-                    label="Reset condition 필요"
+                    label="재설정 조건 필요"
                   />
                 </Grid>
               </Grid>
-              {Boolean(reentry.allow) ? (
+              {reentry.allow ? (
                 <ConditionEditor
-                  label="Reset Condition"
+                  label="재설정 조건"
                   value={asObject(reentry.reset_condition).type || asObject(reentry.reset_condition).logic
                     ? asObject(reentry.reset_condition)
                     : createDefaultResetCondition()}
@@ -747,7 +801,7 @@ function StrategyEditForm({
                 />
               ) : (
                 <Typography variant="body2" color="text.secondary">
-                  재진입이 꺼져 있으면 reset condition은 실행되지 않습니다.
+                  재진입이 꺼져 있으면 재설정 조건은 실행되지 않습니다.
                 </Typography>
               )}
             </Stack>
@@ -764,36 +818,36 @@ function StrategyEditForm({
                     onChange={(event) => updateConfigAtPath(['position', 'size_mode'], event.target.value)}
                   >
                     <MenuItem value="fixed_percent">초기 자금 비율</MenuItem>
-                    <MenuItem value="fixed_amount">고정 금액 (KRW)</MenuItem>
+                    <MenuItem value="fixed_amount">고정 금액 (원)</MenuItem>
                   </Select>
                 </FormControl>
               </Grid>
               <Grid item xs={12} sm={6}>
-                <TextField
-                  label={String(position.size_mode ?? 'fixed_percent') === 'fixed_amount' ? '포지션 금액 (KRW)' : '포지션 비율 (0~1)'}
-                  type="number"
+                <MuiNumberField
+                  label={String(position.size_mode ?? 'fixed_percent') === 'fixed_amount' ? '포지션 금액 (원)' : '포지션 비율 (0~1)'}
                   value={asNumber(position.size_value, 0.1)}
-                  onChange={updateNumberAtPath(['position', 'size_value'], 0.1)}
-                  helperText={String(position.size_mode ?? 'fixed_percent') === 'fixed_amount' ? '주문당 사용할 KRW 금액' : '초기 자금 대비 사용할 비율'}
+                  onValueChange={updateNumberAtPath(['position', 'size_value'], 0.1)}
+                  helperText={String(position.size_mode ?? 'fixed_percent') === 'fixed_amount' ? '주문당 사용할 원화 금액' : '초기 자금 대비 사용할 비율'}
                   fullWidth
+                  step={String(position.size_mode ?? 'fixed_percent') === 'fixed_amount' ? 1000 : 0.01}
                 />
               </Grid>
               <Grid item xs={12} sm={6}>
-                <TextField
-                  label="심볼별 최대 오픈 포지션"
-                  type="number"
+                <MuiNumberField
+                  label="심볼별 최대 보유 포지션"
                   value={asNumber(position.max_open_positions_per_symbol, 1)}
-                  onChange={updateIntegerAtPath(['position', 'max_open_positions_per_symbol'], 1)}
+                  onValueChange={updateIntegerAtPath(['position', 'max_open_positions_per_symbol'], 1)}
                   fullWidth
+                  step={1}
                 />
               </Grid>
               <Grid item xs={12} sm={6}>
-                <TextField
+                <MuiNumberField
                   label="최대 동시 포지션 수"
-                  type="number"
                   value={asNumber(position.max_concurrent_positions, 4)}
-                  onChange={updateIntegerAtPath(['position', 'max_concurrent_positions'], 4)}
+                  onValueChange={updateIntegerAtPath(['position', 'max_concurrent_positions'], 4)}
                   fullWidth
+                  step={1}
                 />
               </Grid>
               <Grid item xs={12}>
@@ -801,7 +855,7 @@ function StrategyEditForm({
               </Grid>
               <Grid item xs={12}>
                 <Typography variant="caption" color="text.secondary">
-                  초기 자금 기본값은 1,000,000 KRW이며, 포지션 크기는 이 자금을 기준으로 계산됩니다.
+                  초기 자금 기본값은 1,000,000원이며, 포지션 크기는 이 자금을 기준으로 계산됩니다.
                 </Typography>
               </Grid>
             </Grid>
@@ -811,49 +865,49 @@ function StrategyEditForm({
             <Stack spacing={2} maxWidth={920} sx={{ width: '100%', mx: 'auto' }}>
               <Grid container spacing={2}>
                 <Grid item xs={12} sm={6}>
-                  <TextField
-                    label="Stop Loss %"
-                    type="number"
+                  <MuiNumberField
+                    label="손절 비율 (%)"
                     fullWidth
                     value={asNumber(exitConfig.stop_loss_pct, 0)}
-                    onChange={updateNumberAtPath(['exit', 'stop_loss_pct'], 0)}
+                    onValueChange={updateNumberAtPath(['exit', 'stop_loss_pct'], 0)}
+                    step={0.1}
                   />
                 </Grid>
                 <Grid item xs={12} sm={6}>
-                  <TextField
-                    label="Take Profit %"
-                    type="number"
+                  <MuiNumberField
+                    label="익절 비율 (%)"
                     fullWidth
                     value={asNumber(exitConfig.take_profit_pct, 0)}
-                    onChange={updateNumberAtPath(['exit', 'take_profit_pct'], 0)}
+                    onValueChange={updateNumberAtPath(['exit', 'take_profit_pct'], 0)}
+                    step={0.1}
                   />
                 </Grid>
                 <Grid item xs={12} sm={6}>
-                  <TextField
-                    label="Trailing Stop %"
-                    type="number"
+                  <MuiNumberField
+                    label="추적 손절 비율 (%)"
                     fullWidth
                     value={asNumber(exitConfig.trailing_stop_pct, 0)}
-                    onChange={updateNumberAtPath(['exit', 'trailing_stop_pct'], 0)}
+                    onValueChange={updateNumberAtPath(['exit', 'trailing_stop_pct'], 0)}
+                    step={0.1}
                   />
                 </Grid>
                 <Grid item xs={12} sm={6}>
-                  <TextField
-                    label="Time Stop Bars"
-                    type="number"
+                  <MuiNumberField
+                    label="시간 제한 봉 수"
                     fullWidth
                     value={asNumber(exitConfig.time_stop_bars, 0)}
-                    onChange={updateIntegerAtPath(['exit', 'time_stop_bars'], 0)}
+                    onValueChange={updateIntegerAtPath(['exit', 'time_stop_bars'], 0)}
+                    step={1}
                   />
                 </Grid>
               </Grid>
               <ConditionEditor
-                label="Exit DSL Condition"
+                label="청산 조건"
                 value={exitConfig.logic || exitConfig.type ? exitConfig : defaultConditionNode()}
                 onChange={(next) => setConfigJson((prev) => updateNestedConfig(prev, ['exit'], { ...asObject(prev.exit), ...next }))}
               />
               <Typography variant="body2" color="text.secondary">
-                퍼센트 기반 청산과 DSL 조건 청산을 함께 저장할 수 있습니다. 런타임은 손절/익절/트레일링/타임스탑과 DSL exit block을 모두 평가합니다.
+                퍼센트 기반 청산과 조건 기반 청산을 함께 저장할 수 있습니다. 런타임은 손절, 익절, 추적 손절, 시간 제한과 청산 조건 블록을 모두 평가합니다.
               </Typography>
             </Stack>
           </TabPanel>
@@ -861,21 +915,21 @@ function StrategyEditForm({
           <TabPanel value={tabValue} index={6}>
             <Grid container spacing={3} maxWidth={840} sx={{ width: '100%', mx: 'auto' }}>
               <Grid item xs={12} sm={6}>
-                <TextField
+                <MuiNumberField
                   label="일일 손실 제한 %"
-                  type="number"
                   value={asNumber(risk.daily_loss_limit_pct, 0)}
-                  onChange={updateNumberAtPath(['risk', 'daily_loss_limit_pct'])}
+                  onValueChange={updateNumberAtPath(['risk', 'daily_loss_limit_pct'])}
                   fullWidth
+                  step={0.1}
                 />
               </Grid>
               <Grid item xs={12} sm={6}>
-                <TextField
+                <MuiNumberField
                   label="전략 최대 낙폭 %"
-                  type="number"
                   value={asNumber(risk.max_strategy_drawdown_pct, 0)}
-                  onChange={updateNumberAtPath(['risk', 'max_strategy_drawdown_pct'])}
+                  onValueChange={updateNumberAtPath(['risk', 'max_strategy_drawdown_pct'])}
                   fullWidth
+                  step={0.1}
                 />
               </Grid>
               <Grid item xs={12}>
@@ -910,21 +964,21 @@ function StrategyEditForm({
           <TabPanel value={tabValue} index={8}>
             <Grid container spacing={3} maxWidth={840} sx={{ width: '100%', mx: 'auto' }}>
               <Grid item xs={12} sm={6}>
-                <TextField
+                <MuiNumberField
                   label="초기 자본"
-                  type="number"
                   value={asNumber(backtest.initial_capital, DEFAULT_INITIAL_CAPITAL)}
-                  onChange={updateNumberAtPath(['backtest', 'initial_capital'], DEFAULT_INITIAL_CAPITAL)}
+                  onValueChange={updateNumberAtPath(['backtest', 'initial_capital'], DEFAULT_INITIAL_CAPITAL)}
                   fullWidth
+                  step={1000}
                 />
               </Grid>
               <Grid item xs={12} sm={6}>
-                <TextField
-                  label="수수료 (BPS)"
-                  type="number"
+                <MuiNumberField
+                  label="수수료 (0.01% 단위)"
                   value={asNumber(backtest.fee_bps, 5)}
-                  onChange={updateNumberAtPath(['backtest', 'fee_bps'], 5)}
+                  onValueChange={updateNumberAtPath(['backtest', 'fee_bps'], 5)}
                   fullWidth
+                  step={0.1}
                 />
               </Grid>
             </Grid>
@@ -957,7 +1011,7 @@ function StrategyEditForm({
           </TabPanel>
 
           <TabPanel value={tabValue} index={10}>
-            {jsonError ? <Alert severity="error" sx={{ mb: 2 }}>잘못된 JSON: {jsonError}</Alert> : null}
+            {jsonError ? <Alert severity="error" sx={{ mb: 2 }}>원본 설정 형식 오류: {jsonError}</Alert> : null}
             <TextField
               multiline
               fullWidth
@@ -969,7 +1023,7 @@ function StrategyEditForm({
                   setConfigJson(parsed)
                   setJsonError(null)
                 } catch (error) {
-                  setJsonError(error instanceof Error ? error.message : '잘못된 JSON')
+                  setJsonError(error instanceof Error ? error.message : '원본 설정 형식 오류')
                 }
               }}
               sx={{ '& .MuiInputBase-root': { minHeight: 520, alignItems: 'flex-start' }, '& textarea': { fontFamily: 'monospace', minHeight: '520px !important' } }}
@@ -997,7 +1051,7 @@ function StrategyEditForm({
       </Card>
 
       <Box sx={{ mt: 2, p: 2, border: '1px solid', borderColor: 'border.default', borderRadius: 2, display: 'flex', justifyContent: 'space-between', gap: 2 }}>
-        <Typography variant="body2" color="text.secondary">폼과 JSON은 동기화되며 저장 시 기존 버전은 유지됩니다.</Typography>
+        <Typography variant="body2" color="text.secondary">폼과 원본 설정은 동기화되며 저장 시 기존 버전은 유지됩니다.</Typography>
         <Stack direction="row" spacing={2}>
           <Button variant="outlined" startIcon={<X size={16} />} onClick={onBack}>취소</Button>
           <Button

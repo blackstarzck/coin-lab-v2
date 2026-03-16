@@ -16,6 +16,8 @@ import {
 } from '@mui/material'
 import type { SelectChangeEvent } from '@mui/material/Select'
 
+import { MuiNumberField } from '@/shared/ui/MuiNumberField'
+
 type JsonObject = Record<string, unknown>
 
 const LOGIC_OPTIONS = ['all', 'any', 'not'] as const
@@ -39,28 +41,56 @@ const FIELD_PANEL_SX = {
   px: 2,
   py: 1.75,
 } as const
+const SOURCE_FIELD_GRID_SX = {
+  display: 'grid',
+  gap: 2,
+  width: '100%',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 180px), 1fr))',
+  alignItems: 'start',
+} as const
+const SOURCE_CARD_GRID_SX = {
+  display: 'grid',
+  gap: 2,
+  width: '100%',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 340px), 1fr))',
+  alignItems: 'start',
+} as const
 const LOGIC_LABELS: Record<(typeof LOGIC_OPTIONS)[number], string> = {
-  all: 'All conditions',
-  any: 'Any condition',
-  not: 'Invert condition',
+  all: '모든 조건',
+  any: '조건 중 하나',
+  not: '조건 반전',
 }
 const LEAF_LABELS: Record<(typeof LEAF_TYPES)[number], string> = {
-  indicator_compare: 'Indicator compare',
-  threshold_compare: 'Threshold compare',
-  cross_over: 'Cross over',
-  cross_under: 'Cross under',
-  price_breakout: 'Price breakout',
-  volume_spike: 'Volume spike',
-  rsi_range: 'RSI range',
-  candle_pattern: 'Candle pattern',
-  regime_match: 'Regime match',
+  indicator_compare: '지표 비교',
+  threshold_compare: '임계값 비교',
+  cross_over: '상향 돌파',
+  cross_under: '하향 이탈',
+  price_breakout: '가격 돌파',
+  volume_spike: '거래량 급증',
+  rsi_range: '상대강도지수 범위',
+  candle_pattern: '캔들 패턴',
+  regime_match: '장세 일치',
 }
 const SOURCE_KIND_LABELS = {
-  price: 'Price field',
-  indicator: 'Indicator',
-  derived: 'Derived metric',
-  constant: 'Constant',
+  price: '가격 항목',
+  indicator: '지표',
+  derived: '파생 지표',
+  constant: '고정값',
 } as const
+const TOKEN_LABELS: Record<string, string> = {
+  highest_high: '최고가',
+  lowest_low: '최저가',
+  volume_ratio: '거래량 비율',
+  bullish_engulfing: '상승 장악형',
+  bearish_engulfing: '하락 장악형',
+  inside_bar_break: '인사이드 바 돌파',
+  long_lower_wick: '긴 아래꼬리',
+  trend_up: '상승 추세',
+  trend_down: '하락 추세',
+  range: '박스권',
+  high_volatility: '고변동성',
+  low_volatility: '저변동성',
+}
 
 function asObject(value: unknown): JsonObject {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonObject) : {}
@@ -90,6 +120,9 @@ function updateParams(ref: JsonObject, key: string, value: unknown): JsonObject 
 }
 
 function formatTokenLabel(value: string): string {
+  if (TOKEN_LABELS[value]) {
+    return TOKEN_LABELS[value]
+  }
   return value
     .split('_')
     .filter(Boolean)
@@ -213,13 +246,13 @@ function SourceRefEditor({
           </Typography>
         </Box>
 
-        <Grid container spacing={2}>
-          <Grid item xs={12} md={4}>
+        <Box sx={SOURCE_FIELD_GRID_SX}>
+          <Box>
             <FormControl fullWidth size="small">
-              <InputLabel>Source Type</InputLabel>
+              <InputLabel>데이터 유형</InputLabel>
               <Select
                 value={kind}
-                label="Source Type"
+                label="데이터 유형"
                 onChange={(event: SelectChangeEvent) => onChange(createDefaultSource(event.target.value as 'price' | 'indicator' | 'derived' | 'constant'))}
               >
                 <MenuItem value="price">{getSourceKindLabel('price')}</MenuItem>
@@ -228,35 +261,35 @@ function SourceRefEditor({
                 <MenuItem value="constant">{getSourceKindLabel('constant')}</MenuItem>
               </Select>
             </FormControl>
-          </Grid>
+          </Box>
 
           {kind === 'price' ? (
-            <Grid item xs={12} md={8}>
+            <Box>
               <FormControl fullWidth size="small">
-                <InputLabel>Field</InputLabel>
+                <InputLabel>가격 항목</InputLabel>
                 <Select
                   value={asString(value.field, 'close')}
-                  label="Field"
+                  label="가격 항목"
                   onChange={(event: SelectChangeEvent) => onChange({ ...value, kind: 'price', field: event.target.value })}
                 >
-                  <MenuItem value="open">Open</MenuItem>
-                  <MenuItem value="high">High</MenuItem>
-                  <MenuItem value="low">Low</MenuItem>
-                  <MenuItem value="close">Close</MenuItem>
-                  <MenuItem value="volume">Volume</MenuItem>
+                  <MenuItem value="open">시가</MenuItem>
+                  <MenuItem value="high">고가</MenuItem>
+                  <MenuItem value="low">저가</MenuItem>
+                  <MenuItem value="close">종가</MenuItem>
+                  <MenuItem value="volume">거래량</MenuItem>
                 </Select>
               </FormControl>
-            </Grid>
+            </Box>
           ) : null}
 
           {kind === 'indicator' ? (
             <>
-              <Grid item xs={12} md={4}>
+              <Box>
                 <FormControl fullWidth size="small">
-                  <InputLabel>Indicator</InputLabel>
+                  <InputLabel>지표</InputLabel>
                   <Select
                     value={indicatorName}
-                    label="Indicator"
+                    label="지표"
                     onChange={(event: SelectChangeEvent) => onChange({
                       ...value,
                       kind: 'indicator',
@@ -264,32 +297,40 @@ function SourceRefEditor({
                       params: event.target.value === 'rsi' ? { length: 14 } : { length: 20 },
                     })}
                   >
-                    <MenuItem value="ema">EMA</MenuItem>
-                    <MenuItem value="rsi">RSI</MenuItem>
+                    <MenuItem value="ema">지수이동평균</MenuItem>
+                    <MenuItem value="rsi">상대강도지수</MenuItem>
                   </Select>
                 </FormControl>
-              </Grid>
-              <Grid item xs={12} md={4}>
-                <TextField
-                  label="Length"
-                  type="number"
+              </Box>
+              <Box>
+                <MuiNumberField
+                  label="기간"
                   size="small"
                   fullWidth
                   value={asNumber(params.length, indicatorName === 'rsi' ? 14 : 20)}
-                  onChange={(event) => onChange(updateParams({ ...value, kind: 'indicator', name: indicatorName }, 'length', Number(event.target.value)))}
+                  onValueChange={(nextValue) => onChange(
+                    updateParams(
+                      { ...value, kind: 'indicator', name: indicatorName },
+                      'length',
+                      typeof nextValue === 'number' && Number.isFinite(nextValue)
+                        ? nextValue
+                        : (indicatorName === 'rsi' ? 14 : 20),
+                    ),
+                  )}
+                  step={1}
                 />
-              </Grid>
+              </Box>
             </>
           ) : null}
 
           {kind === 'derived' ? (
             <>
-              <Grid item xs={12} md={4}>
+              <Box>
                 <FormControl fullWidth size="small">
-                  <InputLabel>Derived Metric</InputLabel>
+                  <InputLabel>파생 지표</InputLabel>
                   <Select
                     value={indicatorName}
-                    label="Derived Metric"
+                    label="파생 지표"
                     onChange={(event: SelectChangeEvent) => {
                       const nextName = event.target.value
                       onChange({
@@ -306,19 +347,25 @@ function SourceRefEditor({
                     <MenuItem value="volume_ratio">{formatTokenLabel('volume_ratio')}</MenuItem>
                   </Select>
                 </FormControl>
-              </Grid>
-              <Grid item xs={12} md={4}>
-                <TextField
-                  label="Lookback"
-                  type="number"
+              </Box>
+              <Box>
+                <MuiNumberField
+                  label="조회 봉 수"
                   size="small"
                   fullWidth
                   value={asNumber(params.lookback, 20)}
-                  onChange={(event) => onChange(updateParams({ ...value, kind: 'derived', name: indicatorName }, 'lookback', Number(event.target.value)))}
+                  onValueChange={(nextValue) => onChange(
+                    updateParams(
+                      { ...value, kind: 'derived', name: indicatorName },
+                      'lookback',
+                      typeof nextValue === 'number' && Number.isFinite(nextValue) ? nextValue : 20,
+                    ),
+                  )}
+                  step={1}
                 />
-              </Grid>
+              </Box>
               {indicatorName !== 'volume_ratio' ? (
-                <Grid item xs={12}>
+                <Box sx={{ gridColumn: '1 / -1' }}>
                   <Box
                     sx={{
                       display: 'inline-flex',
@@ -336,26 +383,29 @@ function SourceRefEditor({
                       checked={Boolean(params.exclude_current)}
                       onChange={(event) => onChange(updateParams({ ...value, kind: 'derived', name: indicatorName }, 'exclude_current', event.target.checked))}
                     />
-                    <Typography variant="body2">Exclude current candle</Typography>
+                    <Typography variant="body2">현재 캔들 제외</Typography>
                   </Box>
-                </Grid>
+                </Box>
               ) : null}
             </>
           ) : null}
 
           {kind === 'constant' ? (
-            <Grid item xs={12} md={4}>
-              <TextField
-                label="Value"
-                type="number"
+            <Box>
+              <MuiNumberField
+                label="값"
                 size="small"
                 fullWidth
                 value={asNumber(value.value, 0)}
-                onChange={(event) => onChange({ kind: 'constant', value: Number(event.target.value) })}
+                onValueChange={(nextValue) => onChange({
+                  kind: 'constant',
+                  value: typeof nextValue === 'number' && Number.isFinite(nextValue) ? nextValue : 0,
+                })}
+                step={0.1}
               />
-            </Grid>
+            </Box>
           ) : null}
-        </Grid>
+        </Box>
       </Stack>
     </Box>
   )
@@ -374,10 +424,10 @@ function LeafEditor({
     <Stack spacing={2.5}>
       <Box sx={{ maxWidth: 320 }}>
         <FormControl fullWidth size="small">
-          <InputLabel>Condition Type</InputLabel>
+          <InputLabel>조건 유형</InputLabel>
           <Select
             value={type}
-            label="Condition Type"
+            label="조건 유형"
             onChange={(event: SelectChangeEvent) => onChange(createDefaultLeaf(event.target.value as (typeof LEAF_TYPES)[number]))}
           >
             {LEAF_TYPES.map((item) => (
@@ -393,10 +443,10 @@ function LeafEditor({
         <Stack spacing={2}>
           <Box sx={{ maxWidth: 220 }}>
             <FormControl fullWidth size="small">
-              <InputLabel>Operator</InputLabel>
+              <InputLabel>연산자</InputLabel>
               <Select
                 value={asString(value.operator, '>')}
-                label="Operator"
+                label="연산자"
                 onChange={(event: SelectChangeEvent) => onChange({ ...value, operator: event.target.value })}
               >
                 {COMPARISON_OPERATORS.map((operator) => (
@@ -405,37 +455,40 @@ function LeafEditor({
               </Select>
             </FormControl>
           </Box>
-          <Grid container spacing={2}>
-            <Grid item xs={12} xl={6}>
-              <SourceRefEditor label="Left source" value={asObject(value.left)} onChange={(next) => onChange({ ...value, left: next })} />
-            </Grid>
-            <Grid item xs={12} xl={6}>
-              <SourceRefEditor label="Right source" value={asObject(value.right)} onChange={(next) => onChange({ ...value, right: next })} />
-            </Grid>
-          </Grid>
+          <Box sx={SOURCE_CARD_GRID_SX}>
+            <Box>
+              <SourceRefEditor label="좌변 값" value={asObject(value.left)} onChange={(next) => onChange({ ...value, left: next })} />
+            </Box>
+            <Box>
+              <SourceRefEditor label="우변 값" value={asObject(value.right)} onChange={(next) => onChange({ ...value, right: next })} />
+            </Box>
+          </Box>
         </Stack>
       ) : null}
 
       {(type === 'cross_over' || type === 'cross_under') ? (
         <Stack spacing={2}>
           <Box sx={{ maxWidth: 220 }}>
-            <TextField
-              label="Lookback Bars"
-              type="number"
+            <MuiNumberField
+              label="조회 봉 수"
               size="small"
               fullWidth
               value={asNumber(value.lookback_bars, 1)}
-              onChange={(event) => onChange({ ...value, lookback_bars: Number(event.target.value) })}
+              onValueChange={(nextValue) => onChange({
+                ...value,
+                lookback_bars: typeof nextValue === 'number' && Number.isFinite(nextValue) ? nextValue : 1,
+              })}
+              step={1}
             />
           </Box>
-          <Grid container spacing={2}>
-            <Grid item xs={12} xl={6}>
-              <SourceRefEditor label="Left source" value={asObject(value.left)} onChange={(next) => onChange({ ...value, left: next })} />
-            </Grid>
-            <Grid item xs={12} xl={6}>
-              <SourceRefEditor label="Right source" value={asObject(value.right)} onChange={(next) => onChange({ ...value, right: next })} />
-            </Grid>
-          </Grid>
+          <Box sx={SOURCE_CARD_GRID_SX}>
+            <Box>
+              <SourceRefEditor label="좌변 값" value={asObject(value.left)} onChange={(next) => onChange({ ...value, left: next })} />
+            </Box>
+            <Box>
+              <SourceRefEditor label="우변 값" value={asObject(value.right)} onChange={(next) => onChange({ ...value, right: next })} />
+            </Box>
+          </Box>
         </Stack>
       ) : null}
 
@@ -443,10 +496,10 @@ function LeafEditor({
         <Stack spacing={2}>
           <Box sx={{ maxWidth: 220 }}>
             <FormControl fullWidth size="small">
-              <InputLabel>Operator</InputLabel>
+              <InputLabel>연산자</InputLabel>
               <Select
                 value={asString(value.operator, '>')}
-                label="Operator"
+                label="연산자"
                 onChange={(event: SelectChangeEvent) => onChange({ ...value, operator: event.target.value })}
               >
                 {COMPARISON_OPERATORS.map((operator) => (
@@ -455,14 +508,14 @@ function LeafEditor({
               </Select>
             </FormControl>
           </Box>
-          <Grid container spacing={2}>
-            <Grid item xs={12} xl={6}>
-              <SourceRefEditor label="Source" value={asObject(value.source)} onChange={(next) => onChange({ ...value, source: next })} />
-            </Grid>
-            <Grid item xs={12} xl={6}>
-              <SourceRefEditor label="Reference" value={asObject(value.reference)} onChange={(next) => onChange({ ...value, reference: next })} />
-            </Grid>
-          </Grid>
+          <Box sx={SOURCE_CARD_GRID_SX}>
+            <Box>
+              <SourceRefEditor label="기준 값" value={asObject(value.source)} onChange={(next) => onChange({ ...value, source: next })} />
+            </Box>
+            <Box>
+              <SourceRefEditor label="참조 값" value={asObject(value.reference)} onChange={(next) => onChange({ ...value, reference: next })} />
+            </Box>
+          </Box>
         </Stack>
       ) : null}
 
@@ -471,10 +524,10 @@ function LeafEditor({
           <Grid container spacing={2}>
             <Grid item xs={12} md={4}>
               <FormControl fullWidth size="small">
-                <InputLabel>Operator</InputLabel>
+                <InputLabel>연산자</InputLabel>
                 <Select
                   value={asString(value.operator, '>=')}
-                  label="Operator"
+                  label="연산자"
                   onChange={(event: SelectChangeEvent) => onChange({ ...value, operator: event.target.value })}
                 >
                   {COMPARISON_OPERATORS.map((operator) => (
@@ -484,17 +537,20 @@ function LeafEditor({
               </FormControl>
             </Grid>
             <Grid item xs={12} md={4}>
-              <TextField
-                label="Threshold"
-                type="number"
+              <MuiNumberField
+                label="기준값"
                 size="small"
                 fullWidth
                 value={asNumber(value.threshold, 2)}
-                onChange={(event) => onChange({ ...value, threshold: Number(event.target.value) })}
+                onValueChange={(nextValue) => onChange({
+                  ...value,
+                  threshold: typeof nextValue === 'number' && Number.isFinite(nextValue) ? nextValue : 2,
+                })}
+                step={0.1}
               />
             </Grid>
           </Grid>
-          <SourceRefEditor label="Source" value={asObject(value.source)} onChange={(next) => onChange({ ...value, source: next })} />
+          <SourceRefEditor label="기준 값" value={asObject(value.source)} onChange={(next) => onChange({ ...value, source: next })} />
         </Stack>
       ) : null}
 
@@ -502,27 +558,33 @@ function LeafEditor({
         <Stack spacing={2}>
           <Grid container spacing={2}>
             <Grid item xs={12} md={4}>
-              <TextField
-                label="Min"
-                type="number"
+              <MuiNumberField
+                label="최소값"
                 size="small"
                 fullWidth
                 value={asNumber(value.min, 45)}
-                onChange={(event) => onChange({ ...value, min: Number(event.target.value) })}
+                onValueChange={(nextValue) => onChange({
+                  ...value,
+                  min: typeof nextValue === 'number' && Number.isFinite(nextValue) ? nextValue : 45,
+                })}
+                step={0.1}
               />
             </Grid>
             <Grid item xs={12} md={4}>
-              <TextField
-                label="Max"
-                type="number"
+              <MuiNumberField
+                label="최대값"
                 size="small"
                 fullWidth
                 value={asNumber(value.max, 65)}
-                onChange={(event) => onChange({ ...value, max: Number(event.target.value) })}
+                onValueChange={(nextValue) => onChange({
+                  ...value,
+                  max: typeof nextValue === 'number' && Number.isFinite(nextValue) ? nextValue : 65,
+                })}
+                step={0.1}
               />
             </Grid>
           </Grid>
-          <SourceRefEditor label="Source" value={asObject(value.source)} onChange={(next) => onChange({ ...value, source: next })} />
+          <SourceRefEditor label="기준 값" value={asObject(value.source)} onChange={(next) => onChange({ ...value, source: next })} />
         </Stack>
       ) : null}
 
@@ -530,10 +592,10 @@ function LeafEditor({
         <Grid container spacing={2}>
           <Grid item xs={12} md={4}>
             <FormControl fullWidth size="small">
-              <InputLabel>Pattern</InputLabel>
+              <InputLabel>패턴</InputLabel>
               <Select
                 value={asString(value.pattern, 'bullish_engulfing')}
-                label="Pattern"
+                label="패턴"
                 onChange={(event: SelectChangeEvent) => onChange({ ...value, pattern: event.target.value })}
               >
                 {['bullish_engulfing', 'bearish_engulfing', 'inside_bar_break', 'long_lower_wick'].map((pattern) => (
@@ -544,7 +606,7 @@ function LeafEditor({
           </Grid>
           <Grid item xs={12} md={4}>
             <TextField
-              label="Timeframe"
+              label="시간 주기"
               size="small"
               fullWidth
               value={asString(value.timeframe, '5m')}
@@ -557,10 +619,10 @@ function LeafEditor({
       {type === 'regime_match' ? (
         <Box sx={{ maxWidth: 320 }}>
           <FormControl fullWidth size="small">
-            <InputLabel>Regime</InputLabel>
+            <InputLabel>장세</InputLabel>
             <Select
               value={asString(value.regime, 'trend_up')}
-              label="Regime"
+              label="장세"
               onChange={(event: SelectChangeEvent) => onChange({ ...value, regime: event.target.value })}
             >
               {['trend_up', 'trend_down', 'range', 'high_volatility', 'low_volatility'].map((regime) => (
@@ -620,7 +682,7 @@ export function ConditionEditor({
               </Typography>
               <Typography variant="caption" color="text.secondary">
                 {isLogicBlock
-                  ? `${getLogicLabel(logicValue)} · ${isNotBlock ? 'single nested condition' : `${conditions.length} nested condition${conditions.length === 1 ? '' : 's'}`}`
+                  ? `${getLogicLabel(logicValue)} · ${isNotBlock ? '하위 조건 1개' : `하위 조건 ${conditions.length}개`}`
                   : getLeafLabel(leafType)}
               </Typography>
             </Box>
@@ -638,10 +700,10 @@ export function ConditionEditor({
 
           <Box sx={{ maxWidth: 320 }}>
             <FormControl fullWidth size="small">
-              <InputLabel>Node Type</InputLabel>
+              <InputLabel>노드 유형</InputLabel>
               <Select
                 value={isLogicBlock ? logicValue : 'leaf'}
-                label="Node Type"
+                label="노드 유형"
                 onChange={(event: SelectChangeEvent) => {
                   const nextValue = event.target.value
                   if (nextValue === 'leaf') {
@@ -658,7 +720,7 @@ export function ConditionEditor({
                 {LOGIC_OPTIONS.map((logic) => (
                   <MenuItem key={logic} value={logic}>{getLogicLabel(logic)}</MenuItem>
                 ))}
-                <MenuItem value="leaf">Single condition</MenuItem>
+                <MenuItem value="leaf">단일 조건</MenuItem>
               </Select>
             </FormControl>
           </Box>
@@ -666,7 +728,7 @@ export function ConditionEditor({
           {isLogicBlock ? (
             isNotBlock ? (
               <ConditionEditor
-                label="Negated condition"
+                label="반전 조건"
                 value={asObject(value.condition)}
                 onChange={(next) => onChange({ logic: 'not', condition: next })}
                 depth={depth + 1}
@@ -676,7 +738,7 @@ export function ConditionEditor({
                 {conditions.map((condition, index) => (
                   <ConditionEditor
                     key={`${label}-${index}`}
-                    label={`Condition ${index + 1}`}
+                    label={`조건 ${index + 1}`}
                     value={asObject(condition)}
                     onChange={(next) => {
                       const nextConditions = [...conditions]
@@ -704,7 +766,7 @@ export function ConditionEditor({
                     px: 2,
                   }}
                 >
-                  Add nested condition
+                  하위 조건 추가
                 </Button>
               </Stack>
             )
@@ -717,6 +779,7 @@ export function ConditionEditor({
   )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function defaultConditionNode(): JsonObject {
   return createDefaultNode()
 }
