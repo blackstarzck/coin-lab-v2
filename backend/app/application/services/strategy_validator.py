@@ -4,6 +4,7 @@ from collections.abc import Iterable
 from typing import TypeGuard, cast
 
 from ...core import error_codes
+from .strategy_plugin_registry import StrategyPluginRegistry
 
 
 class StrategyValidator:
@@ -23,7 +24,16 @@ class StrategyValidator:
         "execution",
         "backtest",
     )
-    OPTIONAL_TOP_LEVEL_FIELDS: tuple[str, ...] = ("description", "enabled", "reentry", "labels", "notes")
+    OPTIONAL_TOP_LEVEL_FIELDS: tuple[str, ...] = (
+        "description",
+        "enabled",
+        "reentry",
+        "labels",
+        "notes",
+        "plugin_id",
+        "plugin_version",
+        "plugin_config",
+    )
     LEAF_TYPES: tuple[str, ...] = (
         "indicator_compare",
         "threshold_compare",
@@ -38,6 +48,9 @@ class StrategyValidator:
     OPERATORS: tuple[str, ...] = (">", ">=", "<", "<=", "==", "!=")
     SOURCE_KINDS: tuple[str, ...] = ("price", "indicator", "derived", "constant")
     REGIMES: tuple[str, ...] = ("trend_up", "trend_down", "range", "high_volatility", "low_volatility")
+
+    def __init__(self, plugin_registry: StrategyPluginRegistry | None = None) -> None:
+        self.plugin_registry = plugin_registry or StrategyPluginRegistry()
 
     def validate(self, config_json: dict[str, object], strict: bool) -> dict[str, object]:
         errors: list[dict[str, str]] = []
@@ -77,6 +90,9 @@ class StrategyValidator:
         backtest = self._as_dict(config_json.get("backtest"))
         entry = self._as_dict(config_json.get("entry"))
         reentry = self._as_dict(config_json.get("reentry"))
+        plugin_id = config_json.get("plugin_id")
+        plugin_version = config_json.get("plugin_version")
+        plugin_config = config_json.get("plugin_config")
 
         _ = self._validate_enum(market.get("exchange"), ("UPBIT",), "$.market.exchange", errors)
         _ = self._validate_enum(market.get("trade_basis"), ("candle", "tick", "hybrid"), "$.market.trade_basis", errors)
@@ -249,6 +265,54 @@ class StrategyValidator:
                         "$.entry",
                     )
         if strategy_type == "plugin":
+            if not isinstance(plugin_id, str) or not plugin_id.strip():
+                self._add_issue(
+                    errors,
+                    error_codes.DSL_PLUGIN_CONTRACT_INVALID,
+                    "type이 'plugin'일 때 plugin_id는 비어 있을 수 없습니다.",
+                    "$.plugin_id",
+                )
+            if plugin_version is not None and (not isinstance(plugin_version, str) or not plugin_version.strip()):
+                self._add_issue(
+                    errors,
+                    error_codes.DSL_PLUGIN_CONTRACT_INVALID,
+                    "plugin_version은 비어 있지 않은 문자열이어야 합니다.",
+                    "$.plugin_version",
+                )
+            if plugin_config is not None and not isinstance(plugin_config, dict):
+                self._add_issue(
+                    errors,
+                    error_codes.DSL_PLUGIN_CONTRACT_INVALID,
+                    "plugin_config는 객체여야 합니다.",
+                    "$.plugin_config",
+                )
+            if isinstance(plugin_id, str) and plugin_id.strip():
+                plugin = self.plugin_registry.get(plugin_id.strip())
+                if plugin is None:
+                    self._add_issue(
+                        errors,
+                        error_codes.DSL_PLUGIN_LOAD_FAILED,
+                        f"등록되지 않은 plugin_id '{plugin_id}'입니다.",
+                        "$.plugin_id",
+                    )
+                else:
+                    if isinstance(plugin_version, str) and plugin_version.strip() and plugin_version.strip() != plugin.plugin_version:
+                        self._add_issue(
+                            errors,
+                            error_codes.DSL_PLUGIN_CONTRACT_INVALID,
+                            f"plugin_version '{plugin_version}'이 등록 버전 '{plugin.plugin_version}'과 일치하지 않습니다.",
+                            "$.plugin_version",
+                        )
+                    if plugin_config is None or isinstance(plugin_config, dict):
+                        try:
+                            plugin.validate(self._as_dict(plugin_config))
+                        except ValueError as exc:
+                            self._add_issue(
+                                errors,
+                                error_codes.DSL_PLUGIN_CONTRACT_INVALID,
+                                f"plugin_config 검증 실패: {exc}",
+                                "$.plugin_config",
+                            )
             self._add_issue(
                 warnings,
                 error_codes.DSL_PLUGIN_AND_DSL_CONFLICT,

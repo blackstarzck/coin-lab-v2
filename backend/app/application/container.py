@@ -21,6 +21,7 @@ class Container:
     stream_service: Any
     health_service: Any
     strategy_validator: Any
+    plugin_registry: Any
     execution_service: Any
     risk_guard_service: Any
     fill_engine: Any
@@ -44,6 +45,7 @@ class Container:
         stream_module = importlib.import_module("app.application.services.stream_service")
         strategy_module = importlib.import_module("app.application.services.strategy_service")
         strategy_validator_module = importlib.import_module("app.application.services.strategy_validator")
+        strategy_plugin_registry_module = importlib.import_module("app.application.services.strategy_plugin_registry")
         universe_module = importlib.import_module("app.application.services.universe_service")
 
         BacktestService = getattr(backtest_module, "BacktestService")
@@ -59,6 +61,7 @@ class Container:
         SignalGenerator = getattr(signal_generator_module, "SignalGenerator")
         StreamService = getattr(stream_module, "StreamService")
         StrategyService = getattr(strategy_module, "StrategyService")
+        StrategyPluginRegistry = getattr(strategy_plugin_registry_module, "StrategyPluginRegistry")
         StrategyValidator = getattr(strategy_validator_module, "StrategyValidator")
         UniverseService = getattr(universe_module, "UniverseService")
 
@@ -75,10 +78,11 @@ class Container:
             InMemoryLabStore = getattr(mem_module, "InMemoryLabStore")
             store = InMemoryLabStore()
         store.seed_defaults()
-        strategy_validator = StrategyValidator()
+        plugin_registry = StrategyPluginRegistry()
+        strategy_validator = StrategyValidator(plugin_registry)
         risk_guard_service = RiskGuardService()
         fill_engine = FillEngine()
-        signal_generator = SignalGenerator()
+        signal_generator = SignalGenerator(plugin_registry=plugin_registry)
         execution_service = ExecutionService(risk_guard_service, fill_engine, signal_generator)
         market_ingest_service = MarketIngestService()
         stream_service = StreamService(store)
@@ -95,6 +99,7 @@ class Container:
             stream_service=stream_service,
             health_service=HealthService(settings, store),
             strategy_validator=strategy_validator,
+            plugin_registry=plugin_registry,
             execution_service=execution_service,
             risk_guard_service=risk_guard_service,
             fill_engine=fill_engine,

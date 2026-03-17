@@ -254,6 +254,68 @@ def test_limit_timeout_fallback_to_market() -> None:
     assert cast(FillResult, result["fill"]).filled is True
 
 
+def test_plugin_strategy_generates_entry_signal() -> None:
+    execution, _, _, _ = _services()
+    config = _base_strategy_config()
+    config.update({
+        "type": "plugin",
+        "plugin_id": "breakout_v1",
+        "plugin_version": "1.0.0",
+        "plugin_config": {
+            "timeframe": "5m",
+            "lookback": 3,
+            "breakout_pct": 0.0,
+            "exit_breakdown_pct": 0.02,
+        },
+        "entry": {},
+    })
+
+    result = execution.process_snapshot(
+        _session(),
+        config,
+        _snapshot_with_history([100.0, 101.0, 102.0, 105.0]),
+    )
+
+    assert result["accepted"] is True
+    signal = cast(Signal, result["signal"])
+    assert signal.action == SignalAction.ENTER.value
+    assert "PLUGIN_BREAKOUT_ENTRY" in signal.reason_codes
+
+
+def test_plugin_strategy_exit_signal_closes_position() -> None:
+    execution, risk_guard, _, _ = _services()
+    position = _position(stop=50.0, tp=150.0)
+    execution.sync_positions([position])
+    risk_guard.register_position("ses_test_001", "KRW-BTC", PositionState.OPEN)
+
+    config = _base_strategy_config()
+    config.update({
+        "type": "plugin",
+        "plugin_id": "breakout_v1",
+        "plugin_version": "1.0.0",
+        "plugin_config": {
+            "timeframe": "5m",
+            "lookback": 3,
+            "breakout_pct": 0.03,
+            "exit_breakdown_pct": 0.0,
+        },
+        "entry": {},
+    })
+
+    result = execution.process_snapshot(
+        _session(),
+        config,
+        _snapshot_with_history([110.0, 109.0, 108.0, 105.0]),
+    )
+
+    assert result["accepted"] is True
+    exits = cast(list[dict[str, object]], result["exits"])
+    assert len(exits) == 1
+    exit_signal = cast(Signal, exits[0]["signal"])
+    assert exit_signal.action == SignalAction.EXIT.value
+    assert "PLUGIN_BREAKDOWN_EXIT" in exit_signal.reason_codes
+
+
 def test_stop_loss_triggered() -> None:
     fill_engine = FillEngine()
     reason = fill_engine.evaluate_exit_triggers(

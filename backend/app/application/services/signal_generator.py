@@ -6,15 +6,22 @@ from uuid import uuid4
 from ...core import error_codes
 from ...core.logging import get_logger
 from ...domain.entities.market import MarketSnapshot
+from ...domain.entities.strategy_decision import PluginAction, StrategyDecision
 from ...domain.entities.session import Signal, SignalAction
 from .strategy_runtime_evaluator import EvaluationResult, StrategyRuntimeEvaluator
+from .strategy_plugin_registry import StrategyPluginRegistry
 
 logger = get_logger(__name__)
 
 
 class SignalGenerator:
-    def __init__(self, runtime_evaluator: StrategyRuntimeEvaluator | None = None) -> None:
+    def __init__(
+        self,
+        runtime_evaluator: StrategyRuntimeEvaluator | None = None,
+        plugin_registry: StrategyPluginRegistry | None = None,
+    ) -> None:
         self.runtime_evaluator = runtime_evaluator or StrategyRuntimeEvaluator()
+        self.plugin_registry = plugin_registry or StrategyPluginRegistry()
         self._signal_dedupe: dict[str, datetime] = {}
 
     def evaluate(
@@ -24,6 +31,9 @@ class SignalGenerator:
         session_id: str,
         strategy_version_id: str,
     ) -> Signal | None:
+        if str(strategy_config.get("type", "dsl")) == "plugin":
+            return self._evaluate_plugin_entry(strategy_config, snapshot, session_id, strategy_version_id)
+
         entry_node = strategy_config.get("entry")
         if not isinstance(entry_node, dict):
             return None
@@ -92,6 +102,36 @@ class SignalGenerator:
             explain_payload=explain_payload,
         )
 
+    def evaluate_plugin_decision(
+        self,
+        strategy_config: dict[str, object],
+        snapshot: MarketSnapshot,
+    ) -> StrategyDecision | None:
+        plugin_id = strategy_config.get("plugin_id")
+        plugin = self.plugin_registry.get(str(plugin_id) if isinstance(plugin_id, str) else None)
+        if plugin is None:
+            logger.error(
+                "Strategy plugin not found",
+                extra={"error_code": error_codes.DSL_PLUGIN_LOAD_FAILED, "plugin_id": plugin_id, "symbol": snapshot.symbol},
+            )
+            return None
+
+        plugin_config = strategy_config.get("plugin_config")
+        try:
+            return plugin.evaluate(snapshot, plugin_config if isinstance(plugin_config, dict) else {})
+        except ValueError:
+            logger.exception(
+                "Strategy plugin config is invalid at runtime",
+                extra={"error_code": error_codes.DSL_PLUGIN_CONTRACT_INVALID, "plugin_id": plugin.plugin_id, "symbol": snapshot.symbol},
+            )
+            return None
+        except Exception:
+            logger.exception(
+                "Strategy plugin evaluation failed",
+                extra={"error_code": error_codes.DSL_PLUGIN_LOAD_FAILED, "plugin_id": plugin.plugin_id, "symbol": snapshot.symbol},
+            )
+            return None
+
     def evaluate_block(
         self,
         node: dict[str, object],
@@ -116,6 +156,27 @@ class SignalGenerator:
             result=result,
             risk_blocks=risk_blocks,
         )
+
+    def build_plugin_explain_payload(
+        self,
+        *,
+        snapshot_key: str,
+        decision: StrategyDecision,
+        fallback_decision: str,
+        risk_blocks: list[str] | None = None,
+    ) -> dict[str, object]:
+        return {
+            "snapshot_key": snapshot_key,
+            "decision": decision.action.value if decision.action != PluginAction.HOLD else fallback_decision,
+            "reason_codes": decision.reason_codes,
+            "facts": decision.facts,
+            "parameters": decision.parameters,
+            "matched_conditions": decision.matched_conditions,
+            "failed_conditions": decision.failed_conditions,
+            "risk_blocks": risk_blocks or [],
+            "legacy_payload": False,
+            "legacy_note": None,
+        }
 
     def snapshot_key(self, snapshot: MarketSnapshot, timeframe: str) -> str:
         return f"{snapshot.symbol}|{timeframe}|{snapshot.snapshot_time.isoformat()}"
@@ -143,3 +204,74 @@ class SignalGenerator:
         for key in expired_keys:
             del self._signal_dedupe[key]
         return dedupe_key in self._signal_dedupe
+
+    def _evaluate_plugin_entry(
+        self,
+        strategy_config: dict[str, object],
+        snapshot: MarketSnapshot,
+        session_id: str,
+        strategy_version_id: str,
+    ) -> Signal | None:
+        timeframe = self.primary_timeframe(strategy_config)
+        snapshot_key = self.snapshot_key(snapshot, timeframe)
+        decision = self.evaluate_plugin_decision(strategy_config, snapshot)
+        if decision is None or decision.action != PluginAction.ENTER:
+            logger.debug("Plugin entry conditions not met", extra={"session_id": session_id, "symbol": snapshot.symbol})
+            return None
+
+        action = SignalAction.ENTER.value
+        dedupe_key = self._generate_signal_dedupe_key(
+            session_id=session_id,
+            strategy_version_id=strategy_version_id,
+            symbol=snapshot.symbol,
+            timeframe=timeframe,
+            action=action,
+            snapshot_key=snapshot_key,
+        )
+        explain_payload = self.build_plugin_explain_payload(
+            snapshot_key=snapshot_key,
+            decision=decision,
+            fallback_decision=action,
+        )
+
+        if self._is_duplicate_signal(dedupe_key):
+            logger.info(
+                "Duplicate plugin signal rejected",
+                extra={"error_code": error_codes.EXEC_DUPLICATE_SIGNAL_IGNORED, "session_id": session_id, "symbol": snapshot.symbol},
+            )
+            return Signal(
+                id=f"sig_{uuid4().hex[:12]}",
+                session_id=session_id,
+                strategy_version_id=strategy_version_id,
+                symbol=snapshot.symbol,
+                timeframe=timeframe,
+                action=action,
+                signal_price=decision.signal_price if decision.signal_price is not None else snapshot.latest_price,
+                confidence=decision.confidence,
+                reason_codes=[error_codes.EXEC_DUPLICATE_SIGNAL_IGNORED],
+                snapshot_time=snapshot.snapshot_time,
+                blocked=True,
+                explain_payload=self.build_plugin_explain_payload(
+                    snapshot_key=snapshot_key,
+                    decision=decision,
+                    fallback_decision="SIGNAL_DEDUPED",
+                    risk_blocks=[error_codes.EXEC_DUPLICATE_SIGNAL_IGNORED],
+                ),
+            )
+
+        self._signal_dedupe[dedupe_key] = datetime.now(UTC)
+        logger.info("Plugin signal generated", extra={"session_id": session_id, "symbol": snapshot.symbol, "reason_codes": decision.reason_codes})
+        return Signal(
+            id=f"sig_{uuid4().hex[:12]}",
+            session_id=session_id,
+            strategy_version_id=strategy_version_id,
+            symbol=snapshot.symbol,
+            timeframe=timeframe,
+            action=action,
+            signal_price=decision.signal_price if decision.signal_price is not None else snapshot.latest_price,
+            confidence=decision.confidence,
+            reason_codes=decision.reason_codes or ["PLUGIN_ENTRY_CONDITION_MET"],
+            snapshot_time=snapshot.snapshot_time,
+            blocked=False,
+            explain_payload=explain_payload,
+        )

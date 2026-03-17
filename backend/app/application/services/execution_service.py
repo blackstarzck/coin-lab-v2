@@ -24,6 +24,7 @@ from ...domain.entities.session import (
     SignalAction,
     SignalState,
 )
+from ...domain.entities.strategy_decision import PluginAction
 from .fill_engine import FillEngine
 from .risk_guard_service import RiskGuardService
 from .signal_generator import SignalGenerator
@@ -234,6 +235,7 @@ class ExecutionService:
         current_price = candle["close"]
         timeframe = self.signal_generator.primary_timeframe(strategy_config)
         snapshot_key = self.signal_generator.snapshot_key(snapshot, timeframe)
+        plugin_decision = self.signal_generator.evaluate_plugin_decision(strategy_config, snapshot) if str(strategy_config.get("type", "dsl")) == "plugin" else None
 
         for position in positions:
             self._position_bars[position.id] = self._position_bars.get(position.id, 0) + 1
@@ -248,7 +250,15 @@ class ExecutionService:
             )
             explain_payload: dict[str, object] | None = None
             reason_codes: list[str] = []
-            if reason is None and isinstance(exit_cfg.get("logic"), str):
+            if reason is None and plugin_decision is not None and plugin_decision.action == PluginAction.EXIT:
+                reason = ExitReason.STRATEGY_EXIT
+                reason_codes = plugin_decision.reason_codes or [ExitReason.STRATEGY_EXIT.value]
+                explain_payload = self.signal_generator.build_plugin_explain_payload(
+                    snapshot_key=snapshot_key,
+                    decision=plugin_decision,
+                    fallback_decision=SignalAction.EXIT.value,
+                )
+            if reason is None and str(strategy_config.get("type", "dsl")) != "plugin" and isinstance(exit_cfg.get("logic"), str):
                 evaluation = self.signal_generator.evaluate_block(
                     exit_cfg,
                     snapshot,

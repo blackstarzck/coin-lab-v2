@@ -33,6 +33,27 @@ import {
   translateSessionStatus,
   translateStrategyType,
 } from '@/shared/lib/i18n'
+import { getBuiltinPluginOption } from '@/features/strategies/pluginCatalog'
+
+type JsonObject = Record<string, unknown>
+
+function asObject(value: unknown): JsonObject {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonObject) : {}
+}
+
+function formatPluginValue(value: unknown): string {
+  if (typeof value === 'number') {
+    return Number.isInteger(value) ? String(value) : value.toString()
+  }
+  if (typeof value === 'string' && value.trim()) {
+    return value
+  }
+  return '-'
+}
+
+function formatPluginRatio(value: unknown): string {
+  return typeof value === 'number' ? `${(value * 100).toFixed(2)}%` : '-'
+}
 
 export default function StrategyDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -67,6 +88,11 @@ export default function StrategyDetailPage() {
   const strategyVersionIds = new Set((versions ?? []).map((version) => version.id))
   const relatedSessions = (sessions ?? []).filter((session) => strategyVersionIds.has(session.strategy_version_id) && session.status === 'RUNNING')
   const relatedBacktests = (backtests ?? []).filter((run) => strategyVersionIds.has(run.strategy_version_id))
+  const latestConfig = latestVersion ? asObject(latestVersion.config_json) : {}
+  const pluginId = typeof latestConfig.plugin_id === 'string' ? latestConfig.plugin_id : ''
+  const pluginVersion = typeof latestConfig.plugin_version === 'string' ? latestConfig.plugin_version : '-'
+  const pluginConfig = asObject(latestConfig.plugin_config)
+  const pluginOption = getBuiltinPluginOption(pluginId)
 
   const getTypeColor = (type: string): ChipProps['color'] => {
     switch (type) {
@@ -185,6 +211,49 @@ export default function StrategyDetailPage() {
               )}
             </CardContent>
           </Card>
+
+          {strategy.strategy_type === 'plugin' && latestVersion ? (
+            <Card sx={{ mb: 3 }}>
+              <CardContent>
+                <Typography variant="h6" mb={2}>플러그인 요약</Typography>
+                <Stack spacing={2}>
+                  <Box>
+                    <Stack direction="row" spacing={1} alignItems="center" mb={0.75}>
+                      <Typography variant="subtitle1" fontWeight={700}>
+                        {(pluginOption?.label ?? pluginId) || '미등록 플러그인'}
+                      </Typography>
+                      <Chip label={`v${pluginVersion}`} size="small" variant="outlined" />
+                    </Stack>
+                    <Typography variant="body2" color="text.secondary">
+                      {pluginOption?.description ?? '프런트에 등록된 플러그인 설명이 없어 저장된 plugin_id 기준으로만 표시합니다.'}
+                    </Typography>
+                  </Box>
+                  <Grid container spacing={2}>
+                    <Grid item xs={12} sm={6}>
+                      <Typography variant="caption" color="text.tertiary">플러그인 ID</Typography>
+                      <Typography variant="body1" sx={{ fontFamily: 'monospace' }}>{pluginId || '-'}</Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <Typography variant="caption" color="text.tertiary">기준 타임프레임</Typography>
+                      <Typography variant="body1">{formatPluginValue(pluginConfig.timeframe)}</Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <Typography variant="caption" color="text.tertiary">룩백 봉 수</Typography>
+                      <Typography variant="body1">{formatPluginValue(pluginConfig.lookback)}</Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <Typography variant="caption" color="text.tertiary">진입 돌파 비율</Typography>
+                      <Typography variant="body1">{formatPluginRatio(pluginConfig.breakout_pct)}</Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <Typography variant="caption" color="text.tertiary">청산 이탈 비율</Typography>
+                      <Typography variant="body1">{formatPluginRatio(pluginConfig.exit_breakdown_pct)}</Typography>
+                    </Grid>
+                  </Grid>
+                </Stack>
+              </CardContent>
+            </Card>
+          ) : null}
 
           {/* JSON Preview */}
           {latestVersion && (

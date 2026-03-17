@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from typing import Any
 
+    from app.domain.entities.strategy_decision import StrategyDecision
+
 
 class StrategyPlugin(ABC):
     plugin_id: str
@@ -17,11 +19,11 @@ class StrategyPlugin(ABC):
         ...
 
     @abstractmethod
-    def evaluate(self, snapshot: Any) -> Any:
+    def evaluate(self, snapshot: Any, config: dict[str, object] | None = None) -> StrategyDecision:
         """Evaluate strategy against a market snapshot. Returns StrategyDecision."""
         ...
 
     @abstractmethod
-    def explain(self, snapshot: Any) -> dict[str, object]:
+    def explain(self, snapshot: Any, config: dict[str, object] | None = None) -> dict[str, object]:
         """Generate explain/debug payload for the given snapshot."""
         ...

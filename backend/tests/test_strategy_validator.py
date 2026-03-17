@@ -323,12 +323,40 @@ def test_negative_stop_loss_pct() -> None:
 def test_valid_plugin_type_with_empty_entry_exit_stubs() -> None:
     config = _base_config()
     config["type"] = "plugin"
+    config["plugin_id"] = "breakout_v1"
+    config["plugin_version"] = "1.0.0"
+    config["plugin_config"] = {"lookback": 20}
     config["entry"] = {}
     config["exit"] = {}
     result = StrategyValidator().validate(config, strict=False)
     assert result["valid"] is True
     assert _issues(result, "errors") == []
     assert "DSL_PLUGIN_AND_DSL_CONFLICT" in _codes(_issues(result, "warnings"))
+
+
+def test_plugin_type_requires_plugin_id() -> None:
+    config = _base_config()
+    config["type"] = "plugin"
+    config["plugin_version"] = "1.0.0"
+    config["plugin_config"] = {}
+    config["entry"] = {}
+    config["exit"] = {}
+    result = StrategyValidator().validate(config, strict=False)
+    assert result["valid"] is False
+    assert "DSL_PLUGIN_CONTRACT_INVALID" in _codes(_issues(result, "errors"))
+
+
+def test_plugin_type_rejects_unknown_plugin_id() -> None:
+    config = _base_config()
+    config["type"] = "plugin"
+    config["plugin_id"] = "unknown_plugin"
+    config["plugin_version"] = "1.0.0"
+    config["plugin_config"] = {}
+    config["entry"] = {}
+    config["exit"] = {}
+    result = StrategyValidator().validate(config, strict=False)
+    assert result["valid"] is False
+    assert "DSL_PLUGIN_LOAD_FAILED" in _codes(_issues(result, "errors"))
 
 
 def test_strict_mode_warning_without_watchlist() -> None:

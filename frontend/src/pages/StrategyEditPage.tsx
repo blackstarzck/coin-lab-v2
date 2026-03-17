@@ -34,6 +34,12 @@ import {
   useValidateDraft,
   useValidateVersion,
 } from '@/features/strategies/api'
+import {
+  BUILTIN_PLUGIN_OPTIONS,
+  DEFAULT_PLUGIN_ID,
+  DEFAULT_PLUGIN_VERSION,
+  getBuiltinPluginOption,
+} from '@/features/strategies/pluginCatalog'
 import type { UniverseCatalogItem } from '@/features/universe/api'
 import { useUniverseCatalog } from '@/features/universe/api'
 import { ConditionEditor, defaultConditionNode } from '@/features/strategies/ConditionEditor'
@@ -63,16 +69,19 @@ const STRATEGY_TYPE_OPTIONS = [
     value: 'dsl',
     label: '규칙식',
     description: '조건 편집기에서 진입과 청산 규칙을 직접 조합하는 기본 전략 유형입니다.',
+    disabled: false,
   },
   {
     value: 'plugin',
     label: '플러그인',
     description: '코드로 구현된 전략 로직을 연결해 실행하는 유형입니다.',
+    disabled: false,
   },
   {
     value: 'hybrid',
     label: '하이브리드',
-    description: '규칙식 설정과 플러그인 로직을 함께 사용하는 혼합형 전략 유형입니다.',
+    description: '규칙식 설정과 플러그인 로직을 함께 사용하는 혼합형 전략 유형입니다. 현재는 준비 중입니다.',
+    disabled: true,
   },
 ] as const
 
@@ -88,6 +97,24 @@ function asObject(value: unknown): JsonObject {
 
 function asArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map((item) => String(item)) : []
+}
+
+function normalizePluginMetadata(config: JsonObject): JsonObject {
+  const requestedPluginId = typeof config.plugin_id === 'string' && config.plugin_id.trim()
+    ? config.plugin_id.trim()
+    : DEFAULT_PLUGIN_ID
+  const pluginOption = getBuiltinPluginOption(requestedPluginId)
+  return {
+    ...config,
+    plugin_id: requestedPluginId,
+    plugin_version: typeof config.plugin_version === 'string' && config.plugin_version.trim()
+      ? config.plugin_version
+      : (pluginOption?.version ?? DEFAULT_PLUGIN_VERSION),
+    plugin_config: {
+      ...(pluginOption?.defaultConfig ?? {}),
+      ...asObject(config.plugin_config),
+    },
+  }
 }
 
 function normalizeSymbolList(value: unknown, fallback = DEFAULT_STRATEGY_SYMBOLS): string[] {
@@ -165,8 +192,21 @@ function updateUniverseConfig(config: JsonObject, updater: (universe: JsonObject
   return updateNestedConfig(config, ['universe'], normalizeUniverseConfig(updater(asObject(config.universe))))
 }
 
+function ensureTimeframeInMarketConfig(config: JsonObject, timeframe: string): JsonObject {
+  const normalizedTimeframe = timeframe.trim()
+  if (!normalizedTimeframe) {
+    return config
+  }
+  const market = asObject(config.market)
+  const currentTimeframes = asArray(market.timeframes).map((item) => item.trim()).filter(Boolean)
+  if (currentTimeframes.includes(normalizedTimeframe)) {
+    return config
+  }
+  return updateNestedConfig(config, ['market', 'timeframes'], [...currentTimeframes, normalizedTimeframe])
+}
+
 function normalizeEditableConfig(config: JsonObject): JsonObject {
-  return {
+  const normalized = {
     ...config,
     universe: normalizeUniverseConfig(asObject(config.universe)),
     position: {
@@ -178,6 +218,13 @@ function normalizeEditableConfig(config: JsonObject): JsonObject {
       ...asObject(config.backtest),
     },
   }
+  if (String(config.type ?? 'dsl') !== 'plugin') {
+    return normalized
+  }
+  const pluginNormalized = normalizePluginMetadata(normalized)
+  const pluginConfig = asObject(pluginNormalized.plugin_config)
+  const pluginTimeframe = typeof pluginConfig.timeframe === 'string' ? pluginConfig.timeframe : ''
+  return ensureTimeframeInMarketConfig(pluginNormalized, pluginTimeframe)
 }
 
 function buildDiffRows(before: unknown, after: unknown, path = ''): DiffRow[] {
@@ -287,6 +334,17 @@ function StrategyEditForm({
   const labels = useMemo(() => labelsText.split(',').map((item) => item.trim()).filter(Boolean), [labelsText])
   const strategyKey = String(configJson.id ?? strategy?.strategy_key ?? '')
   const strategyType = String(configJson.type ?? strategy?.strategy_type ?? 'dsl')
+  const isPluginStrategy = strategyType === 'plugin'
+  const pluginId = String(configJson.plugin_id ?? '')
+  const pluginVersion = String(configJson.plugin_version ?? DEFAULT_PLUGIN_VERSION)
+  const selectedPluginOption = getBuiltinPluginOption(pluginId)
+  const pluginConfig = asObject(configJson.plugin_config)
+  const pluginTimeframe = typeof pluginConfig.timeframe === 'string' && pluginConfig.timeframe.trim()
+    ? String(pluginConfig.timeframe)
+    : (selectedPluginOption?.defaultConfig.timeframe ?? '5m')
+  const pluginLookback = asNumber(pluginConfig.lookback, selectedPluginOption?.defaultConfig.lookback ?? 20)
+  const pluginBreakoutPct = asNumber(pluginConfig.breakout_pct, selectedPluginOption?.defaultConfig.breakout_pct ?? 0)
+  const pluginExitBreakdownPct = asNumber(pluginConfig.exit_breakdown_pct, selectedPluginOption?.defaultConfig.exit_breakdown_pct ?? 0.02)
   const diffRows = useMemo(
     () => buildDiffRows(normalizedInitialConfig, configJson),
     [normalizedInitialConfig, configJson],
@@ -319,6 +377,17 @@ function StrategyEditForm({
   const risk = asObject(configJson.risk)
   const execution = asObject(configJson.execution)
   const backtest = asObject(configJson.backtest)
+  const pluginTimeframeOptions = Array.from(new Set([
+    ...asArray(market.timeframes).map((item) => item.trim()).filter(Boolean),
+    pluginTimeframe,
+    selectedPluginOption?.defaultConfig.timeframe ?? '',
+  ].filter(Boolean)))
+  const pluginConfigPreview = JSON.stringify({
+    timeframe: pluginTimeframe,
+    lookback: pluginLookback,
+    breakout_pct: pluginBreakoutPct,
+    exit_breakdown_pct: pluginExitBreakdownPct,
+  }, null, 2)
   const catalogInfoMap = useMemo(() => {
     const map = new Map<string, UniverseCatalogItem>()
     for (const item of [...topTurnoverMarkets, ...searchResults]) {
@@ -337,6 +406,39 @@ function StrategyEditForm({
 
   const updateNumberAtPath = (path: string[], fallback = 0) => (value: number | null) => {
     updateConfigAtPath(path, coerceNumberValue(value, fallback))
+  }
+
+  const updatePluginConfigField = (field: string, value: unknown) => {
+    setConfigJson((prev) => {
+      const nextConfig = updateNestedConfig(prev, ['plugin_config', field], value)
+      return normalizeEditableConfig(
+        field === 'timeframe' && typeof value === 'string'
+          ? ensureTimeframeInMarketConfig(nextConfig, value)
+          : nextConfig,
+      )
+    })
+  }
+
+  const handleStrategyTypeChange = (nextType: string) => {
+    setConfigJson((prev) => normalizeEditableConfig({ ...prev, type: nextType }))
+    setValidationResult(null)
+    if (nextType === 'plugin' && (tabValue === 3 || tabValue === 5)) {
+      setTabValue(2)
+    }
+  }
+
+  const handlePluginChange = (nextPluginId: string) => {
+    const nextPluginOption = getBuiltinPluginOption(nextPluginId)
+    setConfigJson((prev) => normalizeEditableConfig({
+      ...prev,
+      type: 'plugin',
+      plugin_id: nextPluginId,
+      plugin_version: nextPluginOption?.version ?? DEFAULT_PLUGIN_VERSION,
+      plugin_config: nextPluginId === String(prev.plugin_id ?? '')
+        ? asObject(prev.plugin_config)
+        : { ...(nextPluginOption?.defaultConfig ?? {}) },
+    }))
+    setValidationResult(null)
   }
 
   const handleAddCatalogSymbol = (symbol: string) => {
@@ -385,12 +487,22 @@ function StrategyEditForm({
     if (jsonError) return
     setSaveError(null)
     try {
+      if (isPluginStrategy && !pluginId.trim()) {
+        setSaveError('플러그인 전략은 플러그인 ID를 입력해야 저장할 수 있습니다.')
+        setTabValue(2)
+        return
+      }
       const normalizedStrategyType = strategyType === 'plugin' || strategyType === 'hybrid' ? strategyType : 'dsl'
       const normalizedStrategyKey = strategyKey.trim() || strategy?.strategy_key || normalizeStrategyKey(name)
-      const draftConfig = {
+      const draftConfig: JsonObject = {
         ...buildDraftConfig(configJson, name, description, labels, notes),
         id: normalizedStrategyKey,
         type: normalizedStrategyType,
+      }
+      if (normalizedStrategyType === 'plugin') {
+        draftConfig.plugin_id = pluginId.trim()
+        draftConfig.plugin_version = pluginVersion.trim() || DEFAULT_PLUGIN_VERSION
+        draftConfig.plugin_config = pluginConfig
       }
 
       let targetStrategyId = strategy?.id ?? null
@@ -467,10 +579,10 @@ function StrategyEditForm({
         >
           <Tab label="기본 정보" />
           <Tab label="마켓 및 유니버스" />
-          <Tab label="진입" />
-          <Tab label="재진입" />
+          <Tab label={isPluginStrategy ? '플러그인 설정' : '진입'} />
+          <Tab label={isPluginStrategy ? '재진입 (사용 안 함)' : '재진입'} />
           <Tab label="포지션" />
-          <Tab label="청산" />
+          <Tab label={isPluginStrategy ? '청산 (사용 안 함)' : '청산'} />
           <Tab label="리스크" />
           <Tab label="실행" />
           <Tab label="백테스트" />
@@ -512,10 +624,10 @@ function StrategyEditForm({
                 <Select
                   value={strategyType}
                   label="전략 유형"
-                  onChange={(event) => updateConfigAtPath(['type'], event.target.value)}
+                  onChange={(event) => handleStrategyTypeChange(String(event.target.value))}
                 >
                   {STRATEGY_TYPE_OPTIONS.map((option) => (
-                    <MenuItem key={option.value} value={option.value}>
+                    <MenuItem key={option.value} value={option.value} disabled={Boolean(option.disabled)}>
                       {option.label}
                     </MenuItem>
                   ))}
@@ -744,67 +856,193 @@ function StrategyEditForm({
           </TabPanel>
 
           <TabPanel value={tabValue} index={2}>
-            <Stack spacing={2} sx={CONDITION_TAB_CONTENT_SX}>
-              <Typography variant="body2" color="text.secondary">
-                진입 조건을 구조적으로 편집합니다. 계산에 쓰이는 지표, 조회 봉 수, 기준값 파라미터를 여기서 직접 설정할 수 있습니다.
-              </Typography>
-              <ConditionEditor
-                label="진입 조건"
-                value={asObject(configJson.entry).logic || asObject(configJson.entry).type ? asObject(configJson.entry) : defaultConditionNode()}
-                onChange={(next) => setConfigJson((prev) => updateNestedConfig(prev, ['entry'], next))}
-              />
-            </Stack>
+            {isPluginStrategy ? (
+              <Stack spacing={3} maxWidth={760} sx={{ width: '100%', mx: 'auto' }}>
+                <Alert severity="info">
+                  플러그인 전략은 진입/청산 로직을 조건 편집기 대신 백엔드 플러그인 메타데이터로 저장합니다.
+                </Alert>
+                <Grid container spacing={2}>
+                  <Grid item xs={12} sm={7}>
+                    <FormControl fullWidth>
+                      <InputLabel>플러그인</InputLabel>
+                      <Select
+                        value={pluginId}
+                        label="플러그인"
+                        onChange={(event) => handlePluginChange(String(event.target.value))}
+                      >
+                        {!selectedPluginOption && pluginId ? (
+                          <MenuItem value={pluginId}>{pluginId} (등록 안 됨)</MenuItem>
+                        ) : null}
+                        {BUILTIN_PLUGIN_OPTIONS.map((option) => (
+                          <MenuItem key={option.value} value={option.value}>
+                            {option.label}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid item xs={12} sm={5}>
+                    <TextField
+                      label="플러그인 버전"
+                      value={pluginVersion}
+                      helperText="현재 등록된 버전과 자동으로 맞춰집니다."
+                      fullWidth
+                      InputProps={{ readOnly: true }}
+                    />
+                  </Grid>
+                </Grid>
+                {selectedPluginOption ? (
+                  <>
+                    <Card variant="outlined">
+                      <Box sx={{ p: 2 }}>
+                        <Stack spacing={0.75}>
+                          <Typography variant="subtitle2" fontWeight={700}>
+                            {selectedPluginOption.label}
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary">
+                            {selectedPluginOption.description}
+                          </Typography>
+                        </Stack>
+                      </Box>
+                    </Card>
+                    <Grid container spacing={2}>
+                      <Grid item xs={12} sm={6}>
+                        <FormControl fullWidth>
+                          <InputLabel>기준 타임프레임</InputLabel>
+                          <Select
+                            value={pluginTimeframe}
+                            label="기준 타임프레임"
+                            onChange={(event) => updatePluginConfigField('timeframe', event.target.value)}
+                          >
+                            {pluginTimeframeOptions.map((timeframeOption) => (
+                              <MenuItem key={timeframeOption} value={timeframeOption}>
+                                {timeframeOption}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
+                      </Grid>
+                      <Grid item xs={12} sm={6}>
+                        <MuiNumberField
+                          label="룩백 봉 수"
+                          value={pluginLookback}
+                          onValueChange={(value) => updatePluginConfigField('lookback', coerceIntegerValue(value, selectedPluginOption.defaultConfig.lookback))}
+                          helperText="최근 몇 개 봉의 최고/최저 종가를 기준으로 볼지 설정합니다."
+                          fullWidth
+                          step={1}
+                        />
+                      </Grid>
+                      <Grid item xs={12} sm={6}>
+                        <MuiNumberField
+                          label="진입 돌파 비율"
+                          value={pluginBreakoutPct}
+                          onValueChange={(value) => updatePluginConfigField('breakout_pct', coerceNumberValue(value, selectedPluginOption.defaultConfig.breakout_pct))}
+                          helperText="0.02면 최근 최고 종가보다 2% 위에서 진입합니다."
+                          fullWidth
+                          step={0.01}
+                        />
+                      </Grid>
+                      <Grid item xs={12} sm={6}>
+                        <MuiNumberField
+                          label="청산 이탈 비율"
+                          value={pluginExitBreakdownPct}
+                          onValueChange={(value) => updatePluginConfigField('exit_breakdown_pct', coerceNumberValue(value, selectedPluginOption.defaultConfig.exit_breakdown_pct))}
+                          helperText="0이면 최근 최저 종가 이탈 즉시 청산합니다."
+                          fullWidth
+                          step={0.01}
+                        />
+                      </Grid>
+                    </Grid>
+                  </>
+                ) : (
+                  <Alert severity="warning">
+                    현재 프런트에 등록된 전용 폼이 없는 plugin_id입니다. 원본 설정 편집기에서 plugin_config를 직접 수정하세요.
+                  </Alert>
+                )}
+                <TextField
+                  label="플러그인 설정 미리보기"
+                  value={pluginConfigPreview}
+                  helperText="폼 입력값이 plugin_config JSON으로 저장됩니다. 필요하면 원본 설정 편집기에서 직접 미세 조정할 수 있습니다."
+                  multiline
+                  minRows={8}
+                  fullWidth
+                  InputProps={{ readOnly: true }}
+                />
+              </Stack>
+            ) : (
+              <Stack spacing={2} sx={CONDITION_TAB_CONTENT_SX}>
+                <Typography variant="body2" color="text.secondary">
+                  진입 조건을 구조적으로 편집합니다. 계산에 쓰이는 지표, 조회 봉 수, 기준값 파라미터를 여기서 직접 설정할 수 있습니다.
+                </Typography>
+                <ConditionEditor
+                  label="진입 조건"
+                  value={asObject(configJson.entry).logic || asObject(configJson.entry).type ? asObject(configJson.entry) : defaultConditionNode()}
+                  onChange={(next) => setConfigJson((prev) => updateNestedConfig(prev, ['entry'], next))}
+                />
+              </Stack>
+            )}
           </TabPanel>
 
           <TabPanel value={tabValue} index={3}>
-            <Stack spacing={2} sx={CONDITION_TAB_CONTENT_SX}>
-              <Grid container spacing={2}>
-                <Grid item xs={12} sm={4}>
-                  <FormControlLabel
-                    control={(
-                      <Switch
-                        checked={Boolean(reentry.allow)}
-                        onChange={(event) => updateConfigAtPath(['reentry', 'allow'], event.target.checked)}
-                      />
-                    )}
-                    label="재진입 허용"
-                  />
-                </Grid>
-                <Grid item xs={12} sm={4}>
-                  <MuiNumberField
-                    label="재진입 대기 봉 수"
-                    fullWidth
-                    value={asNumber(reentry.cooldown_bars, 0)}
-                    onValueChange={updateIntegerAtPath(['reentry', 'cooldown_bars'], 0)}
-                    step={1}
-                  />
-                </Grid>
-                <Grid item xs={12} sm={4}>
-                  <FormControlLabel
-                    control={(
-                      <Switch
-                        checked={Boolean(reentry.require_reset)}
-                        onChange={(event) => updateConfigAtPath(['reentry', 'require_reset'], event.target.checked)}
-                      />
-                    )}
-                    label="재설정 조건 필요"
-                  />
-                </Grid>
-              </Grid>
-              {reentry.allow ? (
-                <ConditionEditor
-                  label="재설정 조건"
-                  value={asObject(reentry.reset_condition).type || asObject(reentry.reset_condition).logic
-                    ? asObject(reentry.reset_condition)
-                    : createDefaultResetCondition()}
-                  onChange={(next) => setConfigJson((prev) => updateNestedConfig(prev, ['reentry', 'reset_condition'], next))}
-                />
-              ) : (
+            {isPluginStrategy ? (
+              <Stack spacing={2} maxWidth={760} sx={{ width: '100%', mx: 'auto' }}>
+                <Alert severity="info">
+                  플러그인 전략에서는 재진입 DSL을 편집하지 않습니다. 필요하면 플러그인 내부 로직이나 plugin_config로 처리합니다.
+                </Alert>
                 <Typography variant="body2" color="text.secondary">
-                  재진입이 꺼져 있으면 재설정 조건은 실행되지 않습니다.
+                  현재 버전에서는 재진입 규칙을 별도 폼으로 저장하지 않고, 플러그인 메타데이터만 관리합니다.
                 </Typography>
-              )}
-            </Stack>
+              </Stack>
+            ) : (
+              <Stack spacing={2} sx={CONDITION_TAB_CONTENT_SX}>
+                <Grid container spacing={2}>
+                  <Grid item xs={12} sm={4}>
+                    <FormControlLabel
+                      control={(
+                        <Switch
+                          checked={Boolean(reentry.allow)}
+                          onChange={(event) => updateConfigAtPath(['reentry', 'allow'], event.target.checked)}
+                        />
+                      )}
+                      label="재진입 허용"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={4}>
+                    <MuiNumberField
+                      label="재진입 대기 봉 수"
+                      fullWidth
+                      value={asNumber(reentry.cooldown_bars, 0)}
+                      onValueChange={updateIntegerAtPath(['reentry', 'cooldown_bars'], 0)}
+                      step={1}
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={4}>
+                    <FormControlLabel
+                      control={(
+                        <Switch
+                          checked={Boolean(reentry.require_reset)}
+                          onChange={(event) => updateConfigAtPath(['reentry', 'require_reset'], event.target.checked)}
+                        />
+                      )}
+                      label="재설정 조건 필요"
+                    />
+                  </Grid>
+                </Grid>
+                {reentry.allow ? (
+                  <ConditionEditor
+                    label="재설정 조건"
+                    value={asObject(reentry.reset_condition).type || asObject(reentry.reset_condition).logic
+                      ? asObject(reentry.reset_condition)
+                      : createDefaultResetCondition()}
+                    onChange={(next) => setConfigJson((prev) => updateNestedConfig(prev, ['reentry', 'reset_condition'], next))}
+                  />
+                ) : (
+                  <Typography variant="body2" color="text.secondary">
+                    재진입이 꺼져 있으면 재설정 조건은 실행되지 않습니다.
+                  </Typography>
+                )}
+              </Stack>
+            )}
           </TabPanel>
 
           <TabPanel value={tabValue} index={4}>
@@ -862,54 +1100,65 @@ function StrategyEditForm({
           </TabPanel>
 
           <TabPanel value={tabValue} index={5}>
-            <Stack spacing={2} maxWidth={920} sx={{ width: '100%', mx: 'auto' }}>
-              <Grid container spacing={2}>
-                <Grid item xs={12} sm={6}>
-                  <MuiNumberField
-                    label="손절 비율 (%)"
-                    fullWidth
-                    value={asNumber(exitConfig.stop_loss_pct, 0)}
-                    onValueChange={updateNumberAtPath(['exit', 'stop_loss_pct'], 0)}
-                    step={0.1}
-                  />
+            {isPluginStrategy ? (
+              <Stack spacing={2} maxWidth={760} sx={{ width: '100%', mx: 'auto' }}>
+                <Alert severity="info">
+                  플러그인 전략에서는 청산 DSL을 편집하지 않습니다. 청산 판단은 플러그인 구현이나 별도 plugin_config 규칙으로 옮길 예정입니다.
+                </Alert>
+                <Typography variant="body2" color="text.secondary">
+                  현재 단계에서는 플러그인 식별자와 버전 정보를 저장하는 것까지 지원합니다. 세부 청산 규칙은 원본 설정 편집기에서 직접 관리할 수 있습니다.
+                </Typography>
+              </Stack>
+            ) : (
+              <Stack spacing={2} maxWidth={920} sx={{ width: '100%', mx: 'auto' }}>
+                <Grid container spacing={2}>
+                  <Grid item xs={12} sm={6}>
+                    <MuiNumberField
+                      label="손절 비율 (%)"
+                      fullWidth
+                      value={asNumber(exitConfig.stop_loss_pct, 0)}
+                      onValueChange={updateNumberAtPath(['exit', 'stop_loss_pct'], 0)}
+                      step={0.1}
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <MuiNumberField
+                      label="익절 비율 (%)"
+                      fullWidth
+                      value={asNumber(exitConfig.take_profit_pct, 0)}
+                      onValueChange={updateNumberAtPath(['exit', 'take_profit_pct'], 0)}
+                      step={0.1}
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <MuiNumberField
+                      label="추적 손절 비율 (%)"
+                      fullWidth
+                      value={asNumber(exitConfig.trailing_stop_pct, 0)}
+                      onValueChange={updateNumberAtPath(['exit', 'trailing_stop_pct'], 0)}
+                      step={0.1}
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <MuiNumberField
+                      label="시간 제한 봉 수"
+                      fullWidth
+                      value={asNumber(exitConfig.time_stop_bars, 0)}
+                      onValueChange={updateIntegerAtPath(['exit', 'time_stop_bars'], 0)}
+                      step={1}
+                    />
+                  </Grid>
                 </Grid>
-                <Grid item xs={12} sm={6}>
-                  <MuiNumberField
-                    label="익절 비율 (%)"
-                    fullWidth
-                    value={asNumber(exitConfig.take_profit_pct, 0)}
-                    onValueChange={updateNumberAtPath(['exit', 'take_profit_pct'], 0)}
-                    step={0.1}
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <MuiNumberField
-                    label="추적 손절 비율 (%)"
-                    fullWidth
-                    value={asNumber(exitConfig.trailing_stop_pct, 0)}
-                    onValueChange={updateNumberAtPath(['exit', 'trailing_stop_pct'], 0)}
-                    step={0.1}
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <MuiNumberField
-                    label="시간 제한 봉 수"
-                    fullWidth
-                    value={asNumber(exitConfig.time_stop_bars, 0)}
-                    onValueChange={updateIntegerAtPath(['exit', 'time_stop_bars'], 0)}
-                    step={1}
-                  />
-                </Grid>
-              </Grid>
-              <ConditionEditor
-                label="청산 조건"
-                value={exitConfig.logic || exitConfig.type ? exitConfig : defaultConditionNode()}
-                onChange={(next) => setConfigJson((prev) => updateNestedConfig(prev, ['exit'], { ...asObject(prev.exit), ...next }))}
-              />
-              <Typography variant="body2" color="text.secondary">
-                퍼센트 기반 청산과 조건 기반 청산을 함께 저장할 수 있습니다. 런타임은 손절, 익절, 추적 손절, 시간 제한과 청산 조건 블록을 모두 평가합니다.
-              </Typography>
-            </Stack>
+                <ConditionEditor
+                  label="청산 조건"
+                  value={exitConfig.logic || exitConfig.type ? exitConfig : defaultConditionNode()}
+                  onChange={(next) => setConfigJson((prev) => updateNestedConfig(prev, ['exit'], { ...asObject(prev.exit), ...next }))}
+                />
+                <Typography variant="body2" color="text.secondary">
+                  퍼센트 기반 청산과 조건 기반 청산을 함께 저장할 수 있습니다. 런타임은 손절, 익절, 추적 손절, 시간 제한과 청산 조건 블록을 모두 평가합니다.
+                </Typography>
+              </Stack>
+            )}
           </TabPanel>
 
           <TabPanel value={tabValue} index={6}>
