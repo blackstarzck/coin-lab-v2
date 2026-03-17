@@ -233,14 +233,20 @@ export default function StrategyDetailPage() {
                 </TableHead>
                 <TableBody>
                   {versions?.map((v) => (
-                    <TableRow key={v.id} hover>
+                    <TableRow key={v.id}>
                       <TableCell>
-                        <Typography variant="body2" fontWeight={v.version_no === strategy.latest_version_no ? 600 : 400}>
-                          v{v.version_no}
+                        <Stack direction="row" spacing={1} alignItems="center">
+                          <Typography
+                            component="span"
+                            variant="body2"
+                            fontWeight={v.version_no === strategy.latest_version_no ? 600 : 400}
+                          >
+                            v{v.version_no}
+                          </Typography>
                           {v.version_no === strategy.latest_version_no && (
-                            <Chip label="최신" size="small" color="primary" sx={{ ml: 1, height: 16, fontSize: 9 }} />
+                            <Chip label="최신" size="small" color="primary" sx={{ height: 16, fontSize: 9 }} />
                           )}
-                        </Typography>
+                        </Stack>
                       </TableCell>
                       <TableCell>
                         <Stack direction="row" spacing={0.5}>
