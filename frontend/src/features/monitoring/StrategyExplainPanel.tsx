@@ -1,5 +1,8 @@
 import { Box, Divider, Stack, Switch, Typography } from '@mui/material'
-import { useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode, type RefObject } from 'react'
+
+import { IncrementalTableLoadMore } from '@/shared/ui/IncrementalTableLoadMore'
+import { useIncrementalTableRows } from '@/shared/ui/useIncrementalTableRows'
 
 type JsonObject = Record<string, unknown>
 
@@ -8,6 +11,8 @@ interface StrategyExplainPanelProps {
   selectedSignalId: string | null
   onSelectSignal: (signalId: string) => void
   strategyConfig?: Record<string, unknown> | null
+  scrollRootRef: RefObject<HTMLElement | null>
+  tablePageSize: number
 }
 
 interface RuleDetail {
@@ -586,11 +591,25 @@ function RuleTable({
   rows,
   emptyText,
   mode,
+  scrollRootRef,
+  tablePageSize,
+  resetKey,
 }: {
   rows: RuleRow[]
   emptyText: string
   mode: ViewMode
+  scrollRootRef: RefObject<HTMLElement | null>
+  tablePageSize: number
+  resetKey: string
 }) {
+  const incrementalRows = useIncrementalTableRows({
+    items: rows,
+    enabled: true,
+    pageSize: tablePageSize,
+    resetKey,
+    rootRef: scrollRootRef,
+  })
+
   if (rows.length === 0) {
     return (
       <Typography variant="caption" color="text.secondary">
@@ -621,7 +640,7 @@ function RuleTable({
       </Box>
       <Divider />
       <Stack divider={<Divider flexItem />}>
-        {rows.map((row) => (
+        {incrementalRows.visibleItems.map((row) => (
           <Box
             key={row.id}
             sx={{
@@ -648,11 +667,21 @@ function RuleTable({
           </Box>
         ))}
       </Stack>
+      <IncrementalTableLoadMore
+        batchSize={tablePageSize}
+        visibleCount={incrementalRows.visibleCount}
+        totalCount={incrementalRows.totalCount}
+        sentinelRef={incrementalRows.sentinelRef}
+      />
     </Box>
   )
 }
 
-export function StrategyExplainPanel({ strategyConfig }: StrategyExplainPanelProps) {
+export function StrategyExplainPanel({
+  strategyConfig,
+  scrollRootRef,
+  tablePageSize,
+}: StrategyExplainPanelProps) {
   const config = asObject(strategyConfig)
   const [sectionModes, setSectionModes] = useState<Record<SectionKey, ViewMode>>({
     entry: 'view',
@@ -711,21 +740,42 @@ export function StrategyExplainPanel({ strategyConfig }: StrategyExplainPanelPro
         title="진입 규칙"
         action={<SectionModeSwitch sectionTitle="진입 규칙" mode={sectionModes.entry} onChange={(mode) => handleSectionModeChange('entry', mode)} />}
       >
-        <RuleTable rows={entryRows} emptyText="정의된 진입 조건이 없습니다." mode={sectionModes.entry} />
+        <RuleTable
+          rows={entryRows}
+          emptyText="정의된 진입 조건이 없습니다."
+          mode={sectionModes.entry}
+          scrollRootRef={scrollRootRef}
+          tablePageSize={tablePageSize}
+          resetKey={`entry:${sectionModes.entry}`}
+        />
       </SectionBlock>
 
       <SectionBlock
         title="재진입 규칙"
         action={<SectionModeSwitch sectionTitle="재진입 규칙" mode={sectionModes.reentry} onChange={(mode) => handleSectionModeChange('reentry', mode)} />}
       >
-        <RuleTable rows={reentryRows} emptyText="정의된 재진입 규칙이 없습니다." mode={sectionModes.reentry} />
+        <RuleTable
+          rows={reentryRows}
+          emptyText="정의된 재진입 규칙이 없습니다."
+          mode={sectionModes.reentry}
+          scrollRootRef={scrollRootRef}
+          tablePageSize={tablePageSize}
+          resetKey={`reentry:${sectionModes.reentry}`}
+        />
       </SectionBlock>
 
       <SectionBlock
         title="청산 규칙"
         action={<SectionModeSwitch sectionTitle="청산 규칙" mode={sectionModes.exit} onChange={(mode) => handleSectionModeChange('exit', mode)} />}
       >
-        <RuleTable rows={exitRows} emptyText="정의된 청산 규칙이 없습니다." mode={sectionModes.exit} />
+        <RuleTable
+          rows={exitRows}
+          emptyText="정의된 청산 규칙이 없습니다."
+          mode={sectionModes.exit}
+          scrollRootRef={scrollRootRef}
+          tablePageSize={tablePageSize}
+          resetKey={`exit:${sectionModes.exit}`}
+        />
       </SectionBlock>
     </Stack>
   )

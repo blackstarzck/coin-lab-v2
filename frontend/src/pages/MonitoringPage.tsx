@@ -43,7 +43,7 @@ import { CandlestickChart } from '@/shared/charts/CandlestickChart'
 import { useChartStream } from '@/features/monitoring/useChartStream'
 import { useActiveSymbolPrices, type LiveSymbolPrice } from '@/features/monitoring/useActiveSymbolPrices'
 import { StrategyExplainPanel } from '@/features/monitoring/StrategyExplainPanel'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLogs } from '@/features/logs/api'
 import {
   formatDateTime,
@@ -61,14 +61,18 @@ import type { Order, RiskEvent, Signal } from '@/entities/session/types'
 import type { StrategyVersion } from '@/entities/strategy/types'
 import type { ApiResponse } from '@/shared/types/api'
 import { resolveChartIndicatorSettings } from '@/shared/charts/chartIndicators'
+import { IncrementalTableLoadMore } from '@/shared/ui/IncrementalTableLoadMore'
 import { StatusText, type StatusTextTone } from '@/shared/ui/StatusText'
+import { TwoLineDateTime } from '@/shared/ui/TwoLineDateTime'
 import { useAnimatedTableRows } from '@/shared/ui/useAnimatedTableRows'
+import { useIncrementalTableRows } from '@/shared/ui/useIncrementalTableRows'
 
 const DETAIL_REFRESH_INTERVAL_MS = 2_000
 const POSITION_REFRESH_INTERVAL_MS = 5_000
 const SESSION_REFRESH_INTERVAL_MS = 5_000
 const SESSION_LIST_REFRESH_INTERVAL_MS = 10_000
 const SIGNAL_ORDER_MATCH_WINDOW_MS = 15 * 60 * 1000
+const DETAIL_TABLE_PAGE_SIZE = 15
 const GUIDE_OVERLAY_BG = 'rgba(7, 10, 18, 0.86)'
 
 type SignalOrderTimelineRow = {
@@ -384,6 +388,7 @@ export default function MonitoringPage() {
   const [selectedStrategyId, setSelectedStrategyId] = useState<string | null>(null)
   const [bottomTab, setBottomTab] = useState(0)
   const [selectedSignalId, setSelectedSignalId] = useState<string | null>(null)
+  const detailPanelRef = useRef<HTMLDivElement | null>(null)
 
   const shouldLoadEventLogs = bottomTab === 0
   const shouldLoadStrategyExplain = bottomTab === 1
@@ -561,9 +566,39 @@ export default function MonitoringPage() {
       return right.id.localeCompare(left.id)
     })
   }, [orders, riskEvents, signals])
-  const eventLogRowIds = useMemo(() => eventTimeline.map((log) => `${log.channel}:${log.id}`), [eventTimeline])
-  const signalOrderRowIds = useMemo(() => signalOrderRows.map((row) => row.id), [signalOrderRows])
-  const riskRowIds = useMemo(() => riskEvents?.map((event) => event.id) ?? [], [riskEvents])
+  const eventLogTable = useIncrementalTableRows({
+    items: eventTimeline,
+    enabled: bottomTab === 0,
+    pageSize: DETAIL_TABLE_PAGE_SIZE,
+    resetKey: `${activeSessionId}:event-log`,
+    rootRef: detailPanelRef,
+  })
+  const signalOrderTable = useIncrementalTableRows({
+    items: signalOrderRows,
+    enabled: bottomTab === 2,
+    pageSize: DETAIL_TABLE_PAGE_SIZE,
+    resetKey: `${activeSessionId}:signal-order`,
+    rootRef: detailPanelRef,
+  })
+  const riskTable = useIncrementalTableRows({
+    items: riskEvents ?? [],
+    enabled: bottomTab === 3,
+    pageSize: DETAIL_TABLE_PAGE_SIZE,
+    resetKey: `${activeSessionId}:risk`,
+    rootRef: detailPanelRef,
+  })
+  const eventLogRowIds = useMemo(
+    () => eventLogTable.visibleItems.map((log) => `${log.channel}:${log.id}`),
+    [eventLogTable.visibleItems],
+  )
+  const signalOrderRowIds = useMemo(
+    () => signalOrderTable.visibleItems.map((row) => row.id),
+    [signalOrderTable.visibleItems],
+  )
+  const riskRowIds = useMemo(
+    () => riskTable.visibleItems.map((event) => event.id),
+    [riskTable.visibleItems],
+  )
   const { setRowRef: setEventLogRowRef } = useAnimatedTableRows(eventLogRowIds)
   const { setRowRef: setSignalOrderRowRef } = useAnimatedTableRows(signalOrderRowIds)
   const { setRowRef: setRiskRowRef } = useAnimatedTableRows(riskRowIds)
@@ -1560,7 +1595,7 @@ export default function MonitoringPage() {
               <Tab label="리스크" sx={{ minHeight: 40, py: 1 }} />
             </Tabs>
           </Box>
-          <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
+          <Box ref={detailPanelRef} sx={{ flexGrow: 1, overflowY: 'auto' }}>
             {bottomTab === 0 ? (
               <Box>
                 <DetailGuidePopover
@@ -1582,13 +1617,13 @@ export default function MonitoringPage() {
                       {!eventTimeline.length ? (
                         <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><Typography color="text.secondary">이벤트 로그가 없습니다</Typography></TableCell></TableRow>
                       ) : (
-                        eventTimeline.slice(0, 30).map((log) => (
+                        eventLogTable.visibleItems.map((log) => (
                           <TableRow
                             key={`${log.channel}:${log.id}`}
                             ref={setEventLogRowRef(`${log.channel}:${log.id}`)}
                             sx={{ '& td': { backgroundColor: 'transparent' } }}
                           >
-                            <TableCell><Typography variant="caption" color="text.secondary">{formatTime(log.timestamp)}</Typography></TableCell>
+                            <TableCell><TwoLineDateTime value={log.timestamp} /></TableCell>
                             <TableCell><Typography variant="caption">{translateLogLevel(String(log.level).toLowerCase())}</Typography></TableCell>
                             <TableCell><Typography variant="caption">{translateLogChannel(log.channel)}</Typography></TableCell>
                             <TableCell>
@@ -1605,6 +1640,12 @@ export default function MonitoringPage() {
                     </TableBody>
                   </Table>
                 </TableContainer>
+                <IncrementalTableLoadMore
+                  batchSize={DETAIL_TABLE_PAGE_SIZE}
+                  visibleCount={eventLogTable.visibleCount}
+                  totalCount={eventLogTable.totalCount}
+                  sentinelRef={eventLogTable.sentinelRef}
+                />
               </Box>
             ) : null}
 
@@ -1614,6 +1655,8 @@ export default function MonitoringPage() {
                 selectedSignalId={selectedSignalId}
                 onSelectSignal={setSelectedSignalId}
                 strategyConfig={activeStrategyConfig}
+                scrollRootRef={detailPanelRef}
+                tablePageSize={DETAIL_TABLE_PAGE_SIZE}
               />
             ) : null}
 
@@ -1638,7 +1681,7 @@ export default function MonitoringPage() {
                       {!signalOrderRows.length ? (
                         <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><Typography color="text.secondary">신호와 주문이 없습니다</Typography></TableCell></TableRow>
                       ) : (
-                        signalOrderRows.map((row) => {
+                        signalOrderTable.visibleItems.map((row) => {
                           if (row.kind === 'order-only' && row.order) {
                             const orderTime = getOrderEventTime(row.order)
                             return (
@@ -1648,9 +1691,7 @@ export default function MonitoringPage() {
                                 sx={{ '& td': { backgroundColor: 'transparent' } }}
                               >
                                 <TableCell>
-                                  <Typography variant="caption" color="text.secondary">
-                                    {orderTime ? formatTime(orderTime) : '-'}
-                                  </Typography>
+                                  <TwoLineDateTime value={orderTime} />
                                 </TableCell>
                                 <TableCell><Typography variant="caption" fontWeight={600}>{row.order.symbol}</Typography></TableCell>
                                 <TableCell>
@@ -1689,7 +1730,7 @@ export default function MonitoringPage() {
                               ref={setSignalOrderRowRef(row.id)}
                               sx={{ '& td': { backgroundColor: 'transparent' } }}
                             >
-                              <TableCell><Typography variant="caption" color="text.secondary">{formatTime(signal.snapshot_time)}</Typography></TableCell>
+                              <TableCell><TwoLineDateTime value={signal.snapshot_time} /></TableCell>
                               <TableCell><Typography variant="caption" fontWeight={600}>{signal.symbol}</Typography></TableCell>
                               <TableCell>
                                 <Stack spacing={0.25}>
@@ -1762,54 +1803,66 @@ export default function MonitoringPage() {
                     </TableBody>
                   </Table>
                 </TableContainer>
+                <IncrementalTableLoadMore
+                  batchSize={DETAIL_TABLE_PAGE_SIZE}
+                  visibleCount={signalOrderTable.visibleCount}
+                  totalCount={signalOrderTable.totalCount}
+                  sentinelRef={signalOrderTable.sentinelRef}
+                />
               </Box>
             ) : null}
 
             {bottomTab === 3 ? (
-              <TableContainer>
-                <Table size="small">
-                  <TableHead>
-                    <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 11 } }}>
-                      <TableCell>시간</TableCell>
-                      <TableCell>심각도</TableCell>
-                      <TableCell>코드</TableCell>
-                      <TableCell>메시지</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {!riskEvents?.length ? (
-                      <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><Typography color="text.secondary">리스크 이벤트가 없습니다</Typography></TableCell></TableRow>
-                    ) : (
-                      riskEvents.map((event) => (
-                        <TableRow
-                          key={event.id}
-                          ref={setRiskRowRef(event.id)}
-                          sx={{ '& td': { backgroundColor: 'transparent' } }}
-                        >
-                          <TableCell>
-                            <Typography variant="caption" color="text.secondary">
-                              {formatTime(event.created_at)}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <StatusText tone={event.severity === 'WARN' ? 'warning' : 'danger'}>
-                              {event.severity}
-                            </StatusText>
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="caption" fontFamily="monospace">
-                              {event.code}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="caption">{event.message}</Typography>
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </TableContainer>
+              <Box>
+                <TableContainer>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 11 } }}>
+                        <TableCell>시간</TableCell>
+                        <TableCell>심각도</TableCell>
+                        <TableCell>코드</TableCell>
+                        <TableCell>메시지</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {!riskEvents?.length ? (
+                        <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><Typography color="text.secondary">리스크 이벤트가 없습니다</Typography></TableCell></TableRow>
+                      ) : (
+                        riskTable.visibleItems.map((event) => (
+                          <TableRow
+                            key={event.id}
+                            ref={setRiskRowRef(event.id)}
+                            sx={{ '& td': { backgroundColor: 'transparent' } }}
+                          >
+                            <TableCell>
+                              <TwoLineDateTime value={event.created_at} />
+                            </TableCell>
+                            <TableCell>
+                              <StatusText tone={event.severity === 'WARN' ? 'warning' : 'danger'}>
+                                {event.severity}
+                              </StatusText>
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="caption" fontFamily="monospace">
+                                {event.code}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="caption">{event.message}</Typography>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+                <IncrementalTableLoadMore
+                  batchSize={DETAIL_TABLE_PAGE_SIZE}
+                  visibleCount={riskTable.visibleCount}
+                  totalCount={riskTable.totalCount}
+                  sentinelRef={riskTable.sentinelRef}
+                />
+              </Box>
             ) : null}
           </Box>
         </Card>
