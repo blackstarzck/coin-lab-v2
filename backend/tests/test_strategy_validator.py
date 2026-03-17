@@ -359,6 +359,34 @@ def test_plugin_type_rejects_unknown_plugin_id() -> None:
     assert "DSL_PLUGIN_LOAD_FAILED" in _codes(_issues(result, "errors"))
 
 
+def test_valid_smc_confluence_plugin_type() -> None:
+    config = _base_config()
+    config["type"] = "plugin"
+    config["plugin_id"] = "smc_confluence_v1"
+    config["plugin_version"] = "1.0.0"
+    config["plugin_config"] = {
+        "timeframe": "5m",
+        "trend_lookback": 12,
+        "order_block_lookback": 8,
+        "displacement_min_body_ratio": 0.55,
+        "displacement_min_pct": 0.003,
+        "fvg_gap_pct": 0.001,
+        "zone_retest_tolerance_pct": 0.0015,
+        "exit_zone_break_pct": 0.002,
+        "min_confluence_score": 3,
+        "require_order_block": False,
+        "require_fvg": False,
+        "require_confirmation": True,
+    }
+    config["entry"] = {}
+    config["exit"] = {}
+
+    result = StrategyValidator().validate(config, strict=False)
+
+    assert result["valid"] is True
+    assert _issues(result, "errors") == []
+
+
 def test_strict_mode_warning_without_watchlist() -> None:
     config = _base_config()
     universe = _section(config, "universe")

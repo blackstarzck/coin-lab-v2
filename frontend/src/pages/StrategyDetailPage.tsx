@@ -33,26 +33,16 @@ import {
   translateSessionStatus,
   translateStrategyType,
 } from '@/shared/lib/i18n'
-import { getBuiltinPluginOption } from '@/features/strategies/pluginCatalog'
+import {
+  formatBuiltinPluginConfigValue,
+  getBuiltinPluginOption,
+  getBuiltinPluginSummaryFields,
+} from '@/features/strategies/pluginCatalog'
 
 type JsonObject = Record<string, unknown>
 
 function asObject(value: unknown): JsonObject {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonObject) : {}
-}
-
-function formatPluginValue(value: unknown): string {
-  if (typeof value === 'number') {
-    return Number.isInteger(value) ? String(value) : value.toString()
-  }
-  if (typeof value === 'string' && value.trim()) {
-    return value
-  }
-  return '-'
-}
-
-function formatPluginRatio(value: unknown): string {
-  return typeof value === 'number' ? `${(value * 100).toFixed(2)}%` : '-'
 }
 
 export default function StrategyDetailPage() {
@@ -93,6 +83,7 @@ export default function StrategyDetailPage() {
   const pluginVersion = typeof latestConfig.plugin_version === 'string' ? latestConfig.plugin_version : '-'
   const pluginConfig = asObject(latestConfig.plugin_config)
   const pluginOption = getBuiltinPluginOption(pluginId)
+  const pluginSummaryFields = getBuiltinPluginSummaryFields(pluginId)
 
   const getTypeColor = (type: string): ChipProps['color'] => {
     switch (type) {
@@ -233,22 +224,20 @@ export default function StrategyDetailPage() {
                       <Typography variant="caption" color="text.tertiary">플러그인 ID</Typography>
                       <Typography variant="body1" sx={{ fontFamily: 'monospace' }}>{pluginId || '-'}</Typography>
                     </Grid>
-                    <Grid item xs={12} sm={6}>
-                      <Typography variant="caption" color="text.tertiary">기준 타임프레임</Typography>
-                      <Typography variant="body1">{formatPluginValue(pluginConfig.timeframe)}</Typography>
-                    </Grid>
-                    <Grid item xs={12} sm={6}>
-                      <Typography variant="caption" color="text.tertiary">룩백 봉 수</Typography>
-                      <Typography variant="body1">{formatPluginValue(pluginConfig.lookback)}</Typography>
-                    </Grid>
-                    <Grid item xs={12} sm={6}>
-                      <Typography variant="caption" color="text.tertiary">진입 돌파 비율</Typography>
-                      <Typography variant="body1">{formatPluginRatio(pluginConfig.breakout_pct)}</Typography>
-                    </Grid>
-                    <Grid item xs={12} sm={6}>
-                      <Typography variant="caption" color="text.tertiary">청산 이탈 비율</Typography>
-                      <Typography variant="body1">{formatPluginRatio(pluginConfig.exit_breakdown_pct)}</Typography>
-                    </Grid>
+                    {pluginSummaryFields.length > 0 ? pluginSummaryFields.map((field) => (
+                      <Grid item xs={12} sm={6} key={field.key}>
+                        <Typography variant="caption" color="text.tertiary">{field.label}</Typography>
+                        <Typography variant="body1">
+                          {formatBuiltinPluginConfigValue(field, pluginConfig[field.key] ?? pluginOption?.defaultConfig[field.key])}
+                        </Typography>
+                      </Grid>
+                    )) : (
+                      <Grid item xs={12}>
+                        <Typography variant="body2" color="text.secondary">
+                          요약용 필드 정의가 없어 plugin_config 원본 값은 JSON 미리보기에서 확인할 수 있습니다.
+                        </Typography>
+                      </Grid>
+                    )}
                   </Grid>
                 </Stack>
               </CardContent>

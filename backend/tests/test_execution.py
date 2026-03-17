@@ -173,6 +173,45 @@ def _snapshot_with_history(
     )
 
 
+def _snapshot_with_custom_candles(
+    candles: list[dict[str, float]],
+    *,
+    timeframe: str = "5m",
+    snapshot_time: datetime | None = None,
+) -> MarketSnapshot:
+    now = snapshot_time or datetime.now(UTC)
+    series: list[CandleState] = []
+    for index, candle in enumerate(candles):
+        candle_time = now - timedelta(minutes=(len(candles) - 1 - index) * 5)
+        series.append(
+            CandleState(
+                symbol="KRW-BTC",
+                timeframe=timeframe,
+                open=float(candle["open"]),
+                high=float(candle["high"]),
+                low=float(candle["low"]),
+                close=float(candle["close"]),
+                volume=float(candle.get("volume", 100.0 + index)),
+                candle_start=candle_time,
+                is_closed=True,
+                last_update=candle_time,
+            )
+        )
+
+    current = series[-1]
+    history = tuple(series[:-1])
+    return MarketSnapshot(
+        symbol="KRW-BTC",
+        latest_price=current.close,
+        candles={timeframe: current},
+        volume_24h=1000.0,
+        snapshot_time=current.candle_start,
+        candle_history={timeframe: history},
+        is_stale=False,
+        connection_state=ConnectionState.CONNECTED,
+    )
+
+
 def _position(*, stop: float, tp: float, qty: float = 1.0) -> Position:
     return Position(
         id="pos_test_001",
@@ -314,6 +353,104 @@ def test_plugin_strategy_exit_signal_closes_position() -> None:
     exit_signal = cast(Signal, exits[0]["signal"])
     assert exit_signal.action == SignalAction.EXIT.value
     assert "PLUGIN_BREAKDOWN_EXIT" in exit_signal.reason_codes
+
+
+def test_smc_confluence_plugin_generates_entry_signal() -> None:
+    execution, _, _, _ = _services()
+    config = _base_strategy_config()
+    config.update({
+        "type": "plugin",
+        "plugin_id": "smc_confluence_v1",
+        "plugin_version": "1.0.0",
+        "plugin_config": {
+            "timeframe": "5m",
+            "trend_lookback": 8,
+            "order_block_lookback": 6,
+            "displacement_min_body_ratio": 0.5,
+            "displacement_min_pct": 0.01,
+            "fvg_gap_pct": 0.005,
+            "zone_retest_tolerance_pct": 0.002,
+            "exit_zone_break_pct": 0.002,
+            "min_confluence_score": 4,
+            "require_order_block": True,
+            "require_fvg": True,
+            "require_confirmation": True,
+        },
+        "entry": {},
+    })
+
+    result = execution.process_snapshot(
+        _session(),
+        config,
+        _snapshot_with_custom_candles([
+            {"open": 100.0, "high": 102.5, "low": 99.5, "close": 102.0},
+            {"open": 102.0, "high": 104.5, "low": 101.5, "close": 104.0},
+            {"open": 104.0, "high": 106.5, "low": 103.5, "close": 106.0},
+            {"open": 106.0, "high": 108.0, "low": 105.5, "close": 107.0},
+            {"open": 108.0, "high": 108.4, "low": 106.2, "close": 106.8},
+            {"open": 106.9, "high": 112.0, "low": 106.6, "close": 111.2},
+            {"open": 111.0, "high": 113.0, "low": 109.4, "close": 112.6},
+            {"open": 112.4, "high": 113.2, "low": 111.8, "close": 112.9},
+            {"open": 107.4, "high": 111.4, "low": 106.9, "close": 110.9},
+        ]),
+    )
+
+    assert result["accepted"] is True
+    signal = cast(Signal, result["signal"])
+    assert signal.action == SignalAction.ENTER.value
+    assert "PLUGIN_SMC_CONFLUENCE_ENTRY" in signal.reason_codes
+
+
+def test_smc_confluence_plugin_exit_signal_closes_position() -> None:
+    execution, risk_guard, _, _ = _services()
+    position = _position(stop=50.0, tp=150.0)
+    execution.sync_positions([position])
+    risk_guard.register_position("ses_test_001", "KRW-BTC", PositionState.OPEN)
+
+    config = _base_strategy_config()
+    config.update({
+        "type": "plugin",
+        "plugin_id": "smc_confluence_v1",
+        "plugin_version": "1.0.0",
+        "plugin_config": {
+            "timeframe": "5m",
+            "trend_lookback": 8,
+            "order_block_lookback": 6,
+            "displacement_min_body_ratio": 0.5,
+            "displacement_min_pct": 0.01,
+            "fvg_gap_pct": 0.005,
+            "zone_retest_tolerance_pct": 0.002,
+            "exit_zone_break_pct": 0.002,
+            "min_confluence_score": 4,
+            "require_order_block": True,
+            "require_fvg": True,
+            "require_confirmation": True,
+        },
+        "entry": {},
+    })
+
+    result = execution.process_snapshot(
+        _session(),
+        config,
+        _snapshot_with_custom_candles([
+            {"open": 100.0, "high": 102.5, "low": 99.5, "close": 102.0},
+            {"open": 102.0, "high": 104.5, "low": 101.5, "close": 104.0},
+            {"open": 104.0, "high": 106.5, "low": 103.5, "close": 106.0},
+            {"open": 106.0, "high": 108.0, "low": 105.5, "close": 107.0},
+            {"open": 108.0, "high": 108.4, "low": 106.2, "close": 106.8},
+            {"open": 106.9, "high": 112.0, "low": 106.6, "close": 111.2},
+            {"open": 111.0, "high": 113.0, "low": 109.4, "close": 112.6},
+            {"open": 112.4, "high": 113.2, "low": 111.8, "close": 112.9},
+            {"open": 108.8, "high": 109.0, "low": 104.5, "close": 104.6},
+        ]),
+    )
+
+    assert result["accepted"] is True
+    exits = cast(list[dict[str, object]], result["exits"])
+    assert len(exits) == 1
+    exit_signal = cast(Signal, exits[0]["signal"])
+    assert exit_signal.action == SignalAction.EXIT.value
+    assert "PLUGIN_SMC_EXIT_ORDER_BLOCK_BROKEN" in exit_signal.reason_codes
 
 
 def test_stop_loss_triggered() -> None:

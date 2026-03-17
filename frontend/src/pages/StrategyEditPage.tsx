@@ -38,6 +38,7 @@ import {
   BUILTIN_PLUGIN_OPTIONS,
   DEFAULT_PLUGIN_ID,
   DEFAULT_PLUGIN_VERSION,
+  type BuiltinPluginFieldDefinition,
   getBuiltinPluginOption,
 } from '@/features/strategies/pluginCatalog'
 import type { UniverseCatalogItem } from '@/features/universe/api'
@@ -227,6 +228,34 @@ function normalizeEditableConfig(config: JsonObject): JsonObject {
   return ensureTimeframeInMarketConfig(pluginNormalized, pluginTimeframe)
 }
 
+function readPluginConfigFieldValue(
+  field: BuiltinPluginFieldDefinition,
+  pluginConfig: JsonObject,
+  defaultConfig: Record<string, string | number | boolean>,
+): string | number | boolean {
+  const fallback = defaultConfig[field.key]
+  const value = pluginConfig[field.key]
+  if (field.kind === 'boolean') {
+    return typeof value === 'boolean' ? value : Boolean(fallback)
+  }
+  if (field.kind === 'integer') {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return Math.trunc(value)
+    }
+    return typeof fallback === 'number' ? Math.trunc(fallback) : 0
+  }
+  if (field.kind === 'number') {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value
+    }
+    return typeof fallback === 'number' ? fallback : 0
+  }
+  if (typeof value === 'string' && value.trim()) {
+    return value
+  }
+  return typeof fallback === 'string' ? fallback : ''
+}
+
 function buildDiffRows(before: unknown, after: unknown, path = ''): DiffRow[] {
   if (JSON.stringify(before) === JSON.stringify(after)) {
     return []
@@ -339,12 +368,11 @@ function StrategyEditForm({
   const pluginVersion = String(configJson.plugin_version ?? DEFAULT_PLUGIN_VERSION)
   const selectedPluginOption = getBuiltinPluginOption(pluginId)
   const pluginConfig = asObject(configJson.plugin_config)
+  const pluginDefaultConfig: Record<string, string | number | boolean> = selectedPluginOption?.defaultConfig ?? {}
+  const pluginFieldDefinitions = selectedPluginOption?.fields ?? []
   const pluginTimeframe = typeof pluginConfig.timeframe === 'string' && pluginConfig.timeframe.trim()
     ? String(pluginConfig.timeframe)
-    : (selectedPluginOption?.defaultConfig.timeframe ?? '5m')
-  const pluginLookback = asNumber(pluginConfig.lookback, selectedPluginOption?.defaultConfig.lookback ?? 20)
-  const pluginBreakoutPct = asNumber(pluginConfig.breakout_pct, selectedPluginOption?.defaultConfig.breakout_pct ?? 0)
-  const pluginExitBreakdownPct = asNumber(pluginConfig.exit_breakdown_pct, selectedPluginOption?.defaultConfig.exit_breakdown_pct ?? 0.02)
+    : (typeof pluginDefaultConfig.timeframe === 'string' ? pluginDefaultConfig.timeframe : '5m')
   const diffRows = useMemo(
     () => buildDiffRows(normalizedInitialConfig, configJson),
     [normalizedInitialConfig, configJson],
@@ -380,14 +408,9 @@ function StrategyEditForm({
   const pluginTimeframeOptions = Array.from(new Set([
     ...asArray(market.timeframes).map((item) => item.trim()).filter(Boolean),
     pluginTimeframe,
-    selectedPluginOption?.defaultConfig.timeframe ?? '',
+    typeof pluginDefaultConfig.timeframe === 'string' ? pluginDefaultConfig.timeframe : '',
   ].filter(Boolean)))
-  const pluginConfigPreview = JSON.stringify({
-    timeframe: pluginTimeframe,
-    lookback: pluginLookback,
-    breakout_pct: pluginBreakoutPct,
-    exit_breakdown_pct: pluginExitBreakdownPct,
-  }, null, 2)
+  const pluginConfigPreview = JSON.stringify({ ...pluginDefaultConfig, ...pluginConfig }, null, 2)
   const catalogInfoMap = useMemo(() => {
     const map = new Map<string, UniverseCatalogItem>()
     for (const item of [...topTurnoverMarkets, ...searchResults]) {
@@ -906,52 +929,71 @@ function StrategyEditForm({
                       </Box>
                     </Card>
                     <Grid container spacing={2}>
-                      <Grid item xs={12} sm={6}>
-                        <FormControl fullWidth>
-                          <InputLabel>기준 타임프레임</InputLabel>
-                          <Select
-                            value={pluginTimeframe}
-                            label="기준 타임프레임"
-                            onChange={(event) => updatePluginConfigField('timeframe', event.target.value)}
-                          >
-                            {pluginTimeframeOptions.map((timeframeOption) => (
-                              <MenuItem key={timeframeOption} value={timeframeOption}>
-                                {timeframeOption}
-                              </MenuItem>
-                            ))}
-                          </Select>
-                        </FormControl>
-                      </Grid>
-                      <Grid item xs={12} sm={6}>
-                        <MuiNumberField
-                          label="룩백 봉 수"
-                          value={pluginLookback}
-                          onValueChange={(value) => updatePluginConfigField('lookback', coerceIntegerValue(value, selectedPluginOption.defaultConfig.lookback))}
-                          helperText="최근 몇 개 봉의 최고/최저 종가를 기준으로 볼지 설정합니다."
-                          fullWidth
-                          step={1}
-                        />
-                      </Grid>
-                      <Grid item xs={12} sm={6}>
-                        <MuiNumberField
-                          label="진입 돌파 비율"
-                          value={pluginBreakoutPct}
-                          onValueChange={(value) => updatePluginConfigField('breakout_pct', coerceNumberValue(value, selectedPluginOption.defaultConfig.breakout_pct))}
-                          helperText="0.02면 최근 최고 종가보다 2% 위에서 진입합니다."
-                          fullWidth
-                          step={0.01}
-                        />
-                      </Grid>
-                      <Grid item xs={12} sm={6}>
-                        <MuiNumberField
-                          label="청산 이탈 비율"
-                          value={pluginExitBreakdownPct}
-                          onValueChange={(value) => updatePluginConfigField('exit_breakdown_pct', coerceNumberValue(value, selectedPluginOption.defaultConfig.exit_breakdown_pct))}
-                          helperText="0이면 최근 최저 종가 이탈 즉시 청산합니다."
-                          fullWidth
-                          step={0.01}
-                        />
-                      </Grid>
+                      {pluginFieldDefinitions.map((field) => {
+                        const defaultValue = pluginDefaultConfig[field.key]
+                        const fieldValue = readPluginConfigFieldValue(field, pluginConfig, pluginDefaultConfig)
+                        if (field.kind === 'boolean') {
+                          return (
+                            <Grid item xs={12} sm={6} key={field.key}>
+                              <FormControlLabel
+                                control={(
+                                  <Switch
+                                    checked={Boolean(fieldValue)}
+                                    onChange={(event) => updatePluginConfigField(field.key, event.target.checked)}
+                                  />
+                                )}
+                                label={field.label}
+                              />
+                              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
+                                {field.helperText}
+                              </Typography>
+                            </Grid>
+                          )
+                        }
+                        if (field.kind === 'select') {
+                          const options = field.key === 'timeframe'
+                            ? pluginTimeframeOptions.map((value) => ({ value, label: value }))
+                            : (field.options ?? [])
+                          return (
+                            <Grid item xs={12} sm={6} key={field.key}>
+                              <FormControl fullWidth>
+                                <InputLabel>{field.label}</InputLabel>
+                                <Select
+                                  value={String(fieldValue)}
+                                  label={field.label}
+                                  onChange={(event) => updatePluginConfigField(field.key, String(event.target.value))}
+                                >
+                                  {options.map((option) => (
+                                    <MenuItem key={option.value} value={option.value}>
+                                      {option.label}
+                                    </MenuItem>
+                                  ))}
+                                </Select>
+                              </FormControl>
+                              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
+                                {field.helperText}
+                              </Typography>
+                            </Grid>
+                          )
+                        }
+                        return (
+                          <Grid item xs={12} sm={6} key={field.key}>
+                            <MuiNumberField
+                              label={field.label}
+                              value={typeof fieldValue === 'number' ? fieldValue : 0}
+                              onValueChange={(value) => updatePluginConfigField(
+                                field.key,
+                                field.kind === 'integer'
+                                  ? coerceIntegerValue(value, typeof defaultValue === 'number' ? defaultValue : 0)
+                                  : coerceNumberValue(value, typeof defaultValue === 'number' ? defaultValue : 0),
+                              )}
+                              helperText={field.helperText}
+                              fullWidth
+                              step={field.step ?? (field.kind === 'integer' ? 1 : 0.01)}
+                            />
+                          </Grid>
+                        )
+                      })}
                     </Grid>
                   </>
                 ) : (
