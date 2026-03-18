@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useEffect, useMemo, useTransition, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Box,
@@ -20,6 +20,7 @@ import {
   FormControlLabel,
   Switch,
   Chip,
+  CircularProgress,
   IconButton,
   Skeleton,
   Stack,
@@ -27,16 +28,47 @@ import {
 } from '@mui/material'
 import type { ChipProps } from '@mui/material'
 import { Eye, Edit2, Play, Activity } from 'lucide-react'
+import { preloadStrategyEditPage } from '@/app/routeLoaders'
 import { useStrategies } from '@/features/strategies/api'
 import { formatRelativeTime, translateStrategyType } from '@/shared/lib/i18n'
+
+const CREATE_BUTTON_SPINNER_DELAY_MS = 180
+const CREATE_BUTTON_MIN_WIDTH = 148
 
 export default function StrategiesPage() {
   const navigate = useNavigate()
   const { data: strategies, isLoading } = useStrategies()
+  const [isCreateNavigationPending, startCreateNavigation] = useTransition()
 
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState<string>('all')
   const [activeOnly, setActiveOnly] = useState(false)
+  const [showCreateSpinner, setShowCreateSpinner] = useState(false)
+
+  useEffect(() => {
+    const preloadTimer = window.setTimeout(() => {
+      void preloadStrategyEditPage()
+    }, 300)
+
+    return () => {
+      window.clearTimeout(preloadTimer)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!isCreateNavigationPending) {
+      setShowCreateSpinner(false)
+      return
+    }
+
+    const spinnerTimer = window.setTimeout(() => {
+      setShowCreateSpinner(true)
+    }, CREATE_BUTTON_SPINNER_DELAY_MS)
+
+    return () => {
+      window.clearTimeout(spinnerTimer)
+    }
+  }, [isCreateNavigationPending])
 
   const filteredStrategies = useMemo(() => {
     if (!strategies) return []
@@ -63,11 +95,59 @@ export default function StrategiesPage() {
     }
   }
 
+  const handlePreloadCreatePage = () => {
+    void preloadStrategyEditPage()
+  }
+
+  const handleNavigateToCreatePage = () => {
+    handlePreloadCreatePage()
+    startCreateNavigation(() => {
+      navigate('/strategies/new')
+    })
+  }
+
+  const createButtonContent = (
+    <Box
+      component="span"
+      sx={{
+        display: 'grid',
+        gridTemplateColumns: '16px auto 16px',
+        alignItems: 'center',
+        columnGap: 1,
+      }}
+    >
+      <Box component="span" sx={{ width: 16, height: 16 }} />
+      <Box component="span">전략 생성</Box>
+      <Box
+        component="span"
+        sx={{
+          width: 16,
+          height: 16,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        {showCreateSpinner ? <CircularProgress size={14} color="inherit" /> : null}
+      </Box>
+    </Box>
+  )
+
   return (
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h4">전략</Typography>
-        <Button variant="contained" color="primary" onClick={() => navigate('/strategies/new')}>전략 생성</Button>
+        <Button
+          variant="contained"
+          color="primary"
+          onClick={handleNavigateToCreatePage}
+          onPointerEnter={handlePreloadCreatePage}
+          onFocus={handlePreloadCreatePage}
+          disabled={isCreateNavigationPending}
+          sx={{ minWidth: CREATE_BUTTON_MIN_WIDTH }}
+        >
+          {createButtonContent}
+        </Button>
       </Box>
 
       <Card sx={{ mb: 3 }}>
@@ -131,7 +211,17 @@ export default function StrategiesPage() {
               <TableRow>
                 <TableCell colSpan={8} align="center" sx={{ py: 8 }}>
                   <Typography color="text.secondary" mb={2}>전략이 없습니다. 첫 전략을 만들어 시작하세요.</Typography>
-                  <Button variant="outlined" color="primary" onClick={() => navigate('/strategies/new')}>전략 생성</Button>
+                  <Button
+                    variant="outlined"
+                    color="primary"
+                    onClick={handleNavigateToCreatePage}
+                    onPointerEnter={handlePreloadCreatePage}
+                    onFocus={handlePreloadCreatePage}
+                    disabled={isCreateNavigationPending}
+                    sx={{ minWidth: CREATE_BUTTON_MIN_WIDTH }}
+                  >
+                    {createButtonContent}
+                  </Button>
                 </TableCell>
               </TableRow>
             ) : (
