@@ -136,6 +136,10 @@ class LabStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def create_backtest_trades_bulk(self, trades: list[BacktestTrade]) -> list[BacktestTrade]:
+        raise NotImplementedError
+
+    @abstractmethod
     def get_current_universe(self) -> list[dict[str, object]]:
         raise NotImplementedError
 

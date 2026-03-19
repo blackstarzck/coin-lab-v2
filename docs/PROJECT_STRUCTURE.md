@@ -178,7 +178,15 @@ coin-lab/
 ```
 
 ## Notes
+- `backend/app/domain/strategy_runtime/` now holds the staged domain objects for the layered execution upgrade, including shared market structures, strategy setups, execution plans, and explain snapshots.
+- `backend/app/application/strategy_runtime/detectors/` now hosts extracted detector modules for trend context, order block, fair value gap, structure break, and retest, plus shared candle-resolution helpers used by `smc_confluence_v1`.
+- `backend/app/application/strategy_runtime/composers/`, `.../explain/`, and `.../mappers/` now provide the composer-based decision layer, explain payload assembly, and draft-to-plugin/hybrid mapping used by both plugin wrappers and hybrid strategies.
+- `backend/app/application/strategy_runtime/execution/` now isolates sizing, entry intent, order lifecycle, and exit-trigger policies so `ExecutionService` can orchestrate reusable execution modules instead of owning every rule inline.
+- `backend/tests/strategy_runtime/` now pins the domain-object contracts with serialization and explain-payload focused tests before detector/composer/policy migration starts.
+- `backend/tests/strategy_runtime/composers/` now locks the hybrid runtime and composer mapping behavior so plugin and hybrid strategies share the same deterministic decision path.
+- `backend/tests/strategy_runtime/detectors/` now locks detector contracts for trend context, order block, fair value gap, structure break, and retest before composer migration begins.
 - `backend/app/application/services` now contains strategy, session, monitoring, backtest, log, universe, and stream orchestration over the shared repository contract.
+- `backend/app/application/services/signal_generator.py` now supports `dsl`, `plugin`, and `hybrid` strategy types, while `strategy_validator.py` validates registered composers and execution-module config for hybrid definitions.
 - `backend/app/infrastructure/repositories/lab_store.py` defines the shared repository contract, and `postgres_lab_store.py` enables optional Supabase/Postgres-backed persistence through `COIN_LAB_STORE_BACKEND=postgres`.
 - `backend/app/api/ws_router.py`, `backend/app/application/services/stream_service.py`, and `backend/app/api/routes/universe.py` add websocket monitoring/chart streams plus universe read APIs.
 - `backend/app/workers/market_ingest.py` now persists chart-ready candle snapshots into the active store, and `workers/strategy_runtime.py` persists accepted or rejected runtime outcomes through the same repository contract.
@@ -186,9 +194,11 @@ coin-lab/
 - `backend/app/application/services/market_ingest_service.py` adds normalized event handling, tick buffering, dedupe, reorder-window drops, reconnect delay helpers, and snapshot freshness checks.
 - `backend/app/infrastructure/upbit/websocket_adapter.py` builds official Upbit websocket subscription payloads and normalizes public trade, orderbook, candle, and connection messages into the internal event envelope.
 - `backend/app/infrastructure/upbit/live_execution_adapter.py` adds the guarded REST execution boundary for LIVE mode, including HS512 auth, deterministic identifiers, optional order-test checks, and recovery by exchange identifier lookup.
-- `backend/app/application/services/execution_service.py` captures the current BACKTEST/PAPER execution rules for market fills, limit fills, fallback-to-market behavior, fees, slippage, and core risk guards.
+- `backend/app/application/services/execution_service.py` now delegates sizing, entry intent planning, fill simulation, and exit trigger evaluation to the strategy-runtime execution policy modules while preserving the current BACKTEST/PAPER session flow.
+- `backend/app/application/services/backtest_service.py` can now replay deterministic `snapshot_series` inputs through the shared execution stack, persist closed trades in bulk, and derive metrics/equity curves from actual replay output.
 - `backend/app/application/services/execution_adapters.py` keeps simulated mode adapters lightweight while leaving the LIVE exchange adapter isolated in infra.
 - `backend/app/application/services/runtime_service.py` ties stale-snapshot checks, risk guards, execution-adapter selection, and order submission into one signal-processing step.
+- `workers/backtest.py` and `workers/strategy_runtime.py` are no longer placeholders; they now expose simple CLI entry points for replaying backtests from JSON payloads and manually reevaluating running sessions.
 - `backend/tests/test_market_ingest_service.py` locks the ingest invariants around duplicate drops, out-of-order rejection, tick flushes, freshness thresholds, and reconnect backoff.
 - `backend/tests/test_execution_service.py`, `backend/tests/test_runtime_service.py`, `backend/tests/test_live_execution_adapter.py`, and `backend/tests/test_upbit_websocket_adapter.py` cover execution simulation basics, runtime routing, live-order guard behavior, and adapter normalization contracts.
 - `backend/tests/test_postgres_store_smoke.py` provides an env-gated persistence smoke path for real Postgres or Supabase-backed environments.

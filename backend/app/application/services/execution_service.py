@@ -4,6 +4,12 @@ from datetime import UTC, datetime
 from typing import cast
 from uuid import uuid4
 
+from ...application.strategy_runtime.execution import (
+    EntryExecutionPolicy,
+    ExitExecutionPolicy,
+    OrderLifecyclePolicy,
+    PositionSizingPolicy,
+)
 from ...core import error_codes
 from ...core.logging import get_logger
 from ...core.trace import generate_trace_id
@@ -31,16 +37,16 @@ from .signal_generator import SignalGenerator
 
 logger = get_logger(__name__)
 
-DEFAULT_INITIAL_CAPITAL = 1_000_000.0
-DEFAULT_POSITION_SIZE_MODE = "fixed_percent"
-DEFAULT_POSITION_SIZE_VALUE = 0.1
-
 
 class ExecutionService:
     def __init__(self, risk_guard: RiskGuardService, fill_engine: FillEngine, signal_generator: SignalGenerator) -> None:
         self.risk_guard: RiskGuardService = risk_guard
         self.fill_engine: FillEngine = fill_engine
         self.signal_generator: SignalGenerator = signal_generator
+        self.position_sizing_policy = PositionSizingPolicy()
+        self.entry_execution_policy = EntryExecutionPolicy()
+        self.order_lifecycle_policy = OrderLifecyclePolicy(fill_engine)
+        self.exit_execution_policy = ExitExecutionPolicy(fill_engine)
         self._positions: dict[str, Position] = {}
         self._orders: dict[str, Order] = {}
         self._signals: dict[str, Signal] = {}
@@ -209,6 +215,7 @@ class ExecutionService:
             fill_price=fill.fill_price,
             strategy_config=strategy_config,
             state=PositionState.OPEN,
+            signal=signal,
         )
         self.risk_guard.register_position(session.id, intent.symbol, PositionState.OPEN)
         self._position_bars[position.id] = 0
@@ -235,12 +242,17 @@ class ExecutionService:
         current_price = candle["close"]
         timeframe = self.signal_generator.primary_timeframe(strategy_config)
         snapshot_key = self.signal_generator.snapshot_key(snapshot, timeframe)
-        plugin_decision = self.signal_generator.evaluate_plugin_decision(strategy_config, snapshot) if str(strategy_config.get("type", "dsl")) == "plugin" else None
+        strategy_type = str(strategy_config.get("type", "dsl"))
+        strategy_decision = None
+        if strategy_type == "plugin":
+            strategy_decision = self.signal_generator.evaluate_plugin_decision(strategy_config, snapshot)
+        elif strategy_type == "hybrid":
+            strategy_decision = self.signal_generator.evaluate_hybrid_decision(strategy_config, snapshot)
 
         for position in positions:
             self._position_bars[position.id] = self._position_bars.get(position.id, 0) + 1
             bar_count = self._position_bars[position.id]
-            reason = self.fill_engine.evaluate_exit_triggers(
+            reason = self.exit_execution_policy.evaluate(
                 position=position,
                 current_price=current_price,
                 candle_high=candle_high,
@@ -250,15 +262,23 @@ class ExecutionService:
             )
             explain_payload: dict[str, object] | None = None
             reason_codes: list[str] = []
-            if reason is None and plugin_decision is not None and plugin_decision.action == PluginAction.EXIT:
+            if reason is None and strategy_decision is not None and strategy_decision.action == PluginAction.EXIT:
                 reason = ExitReason.STRATEGY_EXIT
-                reason_codes = plugin_decision.reason_codes or [ExitReason.STRATEGY_EXIT.value]
-                explain_payload = self.signal_generator.build_plugin_explain_payload(
-                    snapshot_key=snapshot_key,
-                    decision=plugin_decision,
-                    fallback_decision=SignalAction.EXIT.value,
+                reason_codes = strategy_decision.reason_codes or [ExitReason.STRATEGY_EXIT.value]
+                explain_payload = (
+                    self.signal_generator.explain_plugin_strategy(
+                        strategy_config=strategy_config,
+                        snapshot=snapshot,
+                        fallback_decision=SignalAction.EXIT.value,
+                    )
+                    if strategy_type == "plugin"
+                    else self.signal_generator.build_hybrid_explain_payload(
+                        strategy_config=strategy_config,
+                        snapshot=snapshot,
+                        fallback_decision=SignalAction.EXIT.value,
+                    )
                 )
-            if reason is None and str(strategy_config.get("type", "dsl")) != "plugin" and isinstance(exit_cfg.get("logic"), str):
+            if reason is None and strategy_type == "dsl" and isinstance(exit_cfg.get("logic"), str):
                 evaluation = self.signal_generator.evaluate_block(
                     exit_cfg,
                     snapshot,
@@ -347,55 +367,20 @@ class ExecutionService:
         strategy_config: dict[str, object],
         snapshot: MarketSnapshot,
     ) -> OrderIntent:
-        execution_cfg = self._as_dict(strategy_config.get("execution"))
-        order_type = str(execution_cfg.get("entry_order_type", OrderType.MARKET.value)).upper()
-        timeout_sec = self._as_float(execution_cfg.get("limit_timeout_sec"), 15.0)
-        fallback_to_market = bool(execution_cfg.get("fallback_to_market", True))
-        requested_qty = self._calculate_position_size(strategy_config, snapshot)
-        limit_price = snapshot.latest_price if order_type == OrderType.LIMIT.value else None
-        return OrderIntent(
-            signal_id=signal.id,
-            session_id=session.id,
-            symbol=signal.symbol,
-            side="BUY",
-            order_type=order_type,
-            order_role=OrderRole.ENTRY.value,
+        requested_qty = self._calculate_position_size(strategy_config, snapshot, signal)
+        plan = self.entry_execution_policy.build_plan(
+            signal=signal,
+            session=session,
+            strategy_config=strategy_config,
+            snapshot=snapshot,
             requested_qty=requested_qty,
-            limit_price=limit_price,
-            timeout_sec=timeout_sec,
-            fallback_to_market=fallback_to_market,
-            idempotency_key=f"{session.id}:{signal.id}:{signal.symbol}:{signal.snapshot_time.isoformat()}",
-            trace_id=generate_trace_id(),
         )
+        intent = self.entry_execution_policy.to_order_intent(signal=signal, session=session, plan=plan)
+        intent.trace_id = generate_trace_id()
+        return intent
 
     def _simulate_fill(self, intent: OrderIntent, snapshot: MarketSnapshot, strategy_config: dict[str, object]) -> FillResult:
-        backtest_cfg = self._as_dict(strategy_config.get("backtest"))
-        execution_cfg = self._as_dict(strategy_config.get("execution"))
-        candle = self._resolve_candle(snapshot, strategy_config)
-        base_price = candle["open"] if str(backtest_cfg.get("fill_assumption", "next_bar_open")) == "next_bar_open" else candle["close"]
-        slippage_model = str(execution_cfg.get("slippage_model", "fixed_bps"))
-        slippage_bps = self._as_float(backtest_cfg.get("slippage_bps"), 0.0)
-        fee_bps = self._as_float(backtest_cfg.get("fee_bps"), 0.0)
-
-        if intent.order_type == OrderType.MARKET.value:
-            return self.fill_engine.simulate_market_fill(
-                base_price=base_price,
-                side=intent.side,
-                slippage_model=slippage_model,
-                slippage_bps=slippage_bps,
-                fee_bps=fee_bps,
-                qty=intent.requested_qty,
-            )
-
-        limit_price = intent.limit_price if intent.limit_price is not None else base_price
-        return self.fill_engine.simulate_limit_fill(
-            limit_price=limit_price,
-            candle_high=candle["high"],
-            candle_low=candle["low"],
-            side=intent.side,
-            fee_bps=fee_bps,
-            qty=intent.requested_qty,
-        )
+        return self.order_lifecycle_policy.simulate_entry_fill(intent, snapshot, strategy_config)
 
     def _handle_limit_timeout(
         self,
@@ -403,53 +388,16 @@ class ExecutionService:
         strategy_config: dict[str, object],
         snapshot: MarketSnapshot,
     ) -> FillResult:
-        if not intent.fallback_to_market:
-            return FillResult(
-                filled=False,
-                fill_price=None,
-                fill_qty=0.0,
-                fee_amount=0.0,
-                slippage_amount=0.0,
-            )
-
-        backtest_cfg = self._as_dict(strategy_config.get("backtest"))
-        execution_cfg = self._as_dict(strategy_config.get("execution"))
-        base_price = snapshot.latest_price or 0.0
         logger.info("Limit timeout fallback to market", extra={"symbol": intent.symbol, "error_code": error_codes.EXEC_LIMIT_NOT_FILLED_TIMEOUT})
-        return self.fill_engine.simulate_market_fill(
-            base_price=base_price,
-            side=intent.side,
-            slippage_model=str(execution_cfg.get("slippage_model", "fixed_bps")),
-            slippage_bps=self._as_float(backtest_cfg.get("slippage_bps"), 0.0),
-            fee_bps=self._as_float(backtest_cfg.get("fee_bps"), 0.0),
-            qty=intent.requested_qty,
-        )
+        return self.order_lifecycle_policy.handle_limit_timeout(intent, strategy_config, snapshot)
 
-    def _calculate_position_size(self, strategy_config: dict[str, object], snapshot: MarketSnapshot) -> float:
-        price = snapshot.latest_price or 0.0
-        if price <= 0:
-            return 0.0
-        pos_cfg = self._as_dict(strategy_config.get("position"))
-        size_mode = str(pos_cfg.get("size_mode", DEFAULT_POSITION_SIZE_MODE))
-        size_value = self._as_float(pos_cfg.get("size_value"), DEFAULT_POSITION_SIZE_VALUE)
-        initial_capital = self._as_float(
-            self._as_dict(strategy_config.get("backtest")).get("initial_capital"),
-            DEFAULT_INITIAL_CAPITAL,
-        )
-
-        if size_mode == "fixed_qty":
-            return max(size_value, 0.0)
-
-        if size_mode == "fixed_amount":
-            qty = size_value / price
-            return max(qty, 0.0)
-
-        if size_mode == "fixed_percent":
-            notional = initial_capital * size_value
-            qty = notional / price
-            return max(qty, 0.0)
-
-        return 0.0
+    def _calculate_position_size(
+        self,
+        strategy_config: dict[str, object],
+        snapshot: MarketSnapshot,
+        signal: Signal | None = None,
+    ) -> float:
+        return self.position_sizing_policy.calculate_quantity(strategy_config, snapshot, signal)
 
     def _update_position_state(
         self,
@@ -461,6 +409,7 @@ class ExecutionService:
         strategy_config: dict[str, object],
         state: PositionState,
         existing_position: Position | None = None,
+        signal: Signal | None = None,
     ) -> Position:
         now = datetime.now(UTC)
         exit_cfg = self._as_dict(strategy_config.get("exit"))
@@ -469,10 +418,19 @@ class ExecutionService:
             stop_loss = None
             take_profit = None
             if entry_price is not None:
-                stop_pct = self._as_float(exit_cfg.get("stop_loss_pct"), 0.0)
-                tp_pct = self._as_float(exit_cfg.get("take_profit_pct"), 0.0)
-                stop_loss = entry_price * (1.0 - stop_pct) if stop_pct > 0 else None
-                take_profit = entry_price * (1.0 + tp_pct) if tp_pct > 0 else None
+                runtime_context = signal.explain_payload.get("strategy_runtime") if signal is not None and isinstance(signal.explain_payload, dict) else None
+                entry_setup = runtime_context.get("entry_setup") if isinstance(runtime_context, dict) else None
+                risk = entry_setup.get("risk") if isinstance(entry_setup, dict) and isinstance(entry_setup.get("risk"), dict) else {}
+                stop_loss = float(risk["stop_loss_price"]) if isinstance(risk.get("stop_loss_price"), int | float) else None
+                tp_prices = risk.get("take_profit_prices") if isinstance(risk, dict) else None
+                if isinstance(tp_prices, list) and tp_prices and isinstance(tp_prices[0], int | float):
+                    take_profit = float(tp_prices[0])
+                if stop_loss is None:
+                    stop_pct = self._as_float(exit_cfg.get("stop_loss_pct"), 0.0)
+                    stop_loss = entry_price * (1.0 - stop_pct) if stop_pct > 0 else None
+                if take_profit is None:
+                    tp_pct = self._as_float(exit_cfg.get("take_profit_pct"), 0.0)
+                    take_profit = entry_price * (1.0 + tp_pct) if tp_pct > 0 else None
             position = Position(
                 id=f"pos_{uuid4().hex[:12]}",
                 session_id=session.id,
