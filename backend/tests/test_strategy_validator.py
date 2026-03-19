@@ -387,6 +387,42 @@ def test_valid_smc_confluence_plugin_type() -> None:
     assert _issues(result, "errors") == []
 
 
+def test_valid_hybrid_type_with_registered_composer() -> None:
+    config = _base_config()
+    config["type"] = "hybrid"
+    config["entry"] = {}
+    config["hybrid"] = {
+        "composer_id": "breakout_v1",
+        "composer_config": {
+            "timeframe": "5m",
+            "lookback": 3,
+            "breakout_pct": 0.0,
+            "exit_breakdown_pct": 0.01,
+        },
+    }
+    config["execution_modules"] = {
+        "entry_policy": {"policy_id": "signal_price"},
+        "sizing_policy": {"policy_id": "default_v1"},
+    }
+
+    result = StrategyValidator().validate(config, strict=False)
+
+    assert result["valid"] is True
+    assert _issues(result, "errors") == []
+
+
+def test_hybrid_type_requires_registered_composer() -> None:
+    config = _base_config()
+    config["type"] = "hybrid"
+    config["entry"] = {}
+    config["hybrid"] = {"composer_id": "missing_composer", "composer_config": {}}
+
+    result = StrategyValidator().validate(config, strict=False)
+
+    assert result["valid"] is False
+    assert "DSL_PLUGIN_LOAD_FAILED" in _codes(_issues(result, "errors"))
+
+
 def test_strict_mode_warning_without_watchlist() -> None:
     config = _base_config()
     universe = _section(config, "universe")

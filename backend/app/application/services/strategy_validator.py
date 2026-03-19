@@ -4,6 +4,7 @@ from collections.abc import Iterable
 from typing import TypeGuard, cast
 
 from ...core import error_codes
+from ..strategy_runtime import StrategyComposerRegistry
 from .strategy_plugin_registry import StrategyPluginRegistry
 
 
@@ -30,6 +31,8 @@ class StrategyValidator:
         "reentry",
         "labels",
         "notes",
+        "hybrid",
+        "execution_modules",
         "plugin_id",
         "plugin_version",
         "plugin_config",
@@ -49,8 +52,13 @@ class StrategyValidator:
     SOURCE_KINDS: tuple[str, ...] = ("price", "indicator", "derived", "constant")
     REGIMES: tuple[str, ...] = ("trend_up", "trend_down", "range", "high_volatility", "low_volatility")
 
-    def __init__(self, plugin_registry: StrategyPluginRegistry | None = None) -> None:
+    def __init__(
+        self,
+        plugin_registry: StrategyPluginRegistry | None = None,
+        composer_registry: StrategyComposerRegistry | None = None,
+    ) -> None:
         self.plugin_registry = plugin_registry or StrategyPluginRegistry()
+        self.composer_registry = composer_registry or StrategyComposerRegistry()
 
     def validate(self, config_json: dict[str, object], strict: bool) -> dict[str, object]:
         errors: list[dict[str, str]] = []
@@ -90,6 +98,8 @@ class StrategyValidator:
         backtest = self._as_dict(config_json.get("backtest"))
         entry = self._as_dict(config_json.get("entry"))
         reentry = self._as_dict(config_json.get("reentry"))
+        hybrid = self._as_dict(config_json.get("hybrid"))
+        execution_modules = config_json.get("execution_modules")
         plugin_id = config_json.get("plugin_id")
         plugin_version = config_json.get("plugin_version")
         plugin_config = config_json.get("plugin_config")
@@ -236,7 +246,7 @@ class StrategyValidator:
             )
 
         timeframe_set = {str(timeframe) for timeframe in timeframes if isinstance(timeframe, str)}
-        if strategy_type != "plugin":
+        if strategy_type == "dsl":
             self._validate_condition_block(entry, "$.entry", 1, timeframe_set, errors)
         if reentry:
             if "cooldown_bars" in reentry:
@@ -244,7 +254,7 @@ class StrategyValidator:
             reset_condition = self._as_dict(reentry.get("reset_condition"))
             if reset_condition:
                 self._validate_condition_block(reset_condition, "$.reentry.reset_condition", 1, timeframe_set, errors)
-        if strategy_type != "plugin" and isinstance(exit_cfg.get("logic"), str):
+        if strategy_type in {"dsl", "hybrid"} and isinstance(exit_cfg.get("logic"), str):
             self._validate_condition_block(exit_cfg, "$.exit", 1, timeframe_set, errors)
 
         if strategy_type == "dsl":
@@ -319,6 +329,57 @@ class StrategyValidator:
                 "전략 타입이 'plugin'이면 entry/exit DSL 블록은 무시됩니다.",
                 "$.entry",
             )
+
+        if strategy_type == "hybrid":
+            composer_id = hybrid.get("composer_id")
+            composer_config = hybrid.get("composer_config")
+            if not isinstance(composer_id, str) or not composer_id.strip():
+                self._add_issue(
+                    errors,
+                    error_codes.DSL_PLUGIN_CONTRACT_INVALID,
+                    "hybrid.composer_id must be a non-empty string.",
+                    "$.hybrid.composer_id",
+                )
+            if composer_config is not None and not isinstance(composer_config, dict):
+                self._add_issue(
+                    errors,
+                    error_codes.DSL_PLUGIN_CONTRACT_INVALID,
+                    "hybrid.composer_config must be an object.",
+                    "$.hybrid.composer_config",
+                )
+            if execution_modules is not None and not isinstance(execution_modules, dict):
+                self._add_issue(
+                    errors,
+                    error_codes.DSL_PLUGIN_CONTRACT_INVALID,
+                    "execution_modules must be an object.",
+                    "$.execution_modules",
+                )
+            if isinstance(composer_id, str) and composer_id.strip():
+                composer = self.composer_registry.get(composer_id.strip())
+                if composer is None:
+                    self._add_issue(
+                        errors,
+                        error_codes.DSL_PLUGIN_LOAD_FAILED,
+                        f"Unknown hybrid composer '{composer_id}'.",
+                        "$.hybrid.composer_id",
+                    )
+                elif composer_config is None or isinstance(composer_config, dict):
+                    try:
+                        composer.validate(self._as_dict(composer_config))
+                    except ValueError as exc:
+                        self._add_issue(
+                            errors,
+                            error_codes.DSL_PLUGIN_CONTRACT_INVALID,
+                            f"hybrid.composer_config validation failed: {exc}",
+                            "$.hybrid.composer_config",
+                        )
+            if entry:
+                self._add_issue(
+                    warnings,
+                    error_codes.DSL_PLUGIN_AND_DSL_CONFLICT,
+                    "type 'hybrid' ignores the top-level entry DSL block and uses hybrid.composer_id.",
+                    "$.entry",
+                )
 
         if strict:
             if universe_mode == "dynamic" and "watchlist" not in sources:

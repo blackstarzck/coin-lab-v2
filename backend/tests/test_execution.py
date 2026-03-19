@@ -81,6 +81,41 @@ def test_fixed_amount_position_size_uses_krw_notional() -> None:
     assert qty == pytest.approx(2_500.0)
 
 
+def test_risk_per_trade_position_size_uses_runtime_stop_loss() -> None:
+    execution, _, _, _ = _services()
+    signal = Signal(
+        id="sig_test_risk_001",
+        session_id="ses_test_001",
+        strategy_version_id="stv_test_001",
+        symbol="KRW-BTC",
+        timeframe="5m",
+        action=SignalAction.ENTER.value,
+        signal_price=100.0,
+        confidence=1.0,
+        reason_codes=["HYBRID_ENTRY"],
+        snapshot_time=datetime.now(UTC),
+        blocked=False,
+        explain_payload={
+            "strategy_runtime": {
+                "entry_setup": {
+                    "risk": {"stop_loss_price": 95.0, "take_profit_prices": [110.0]},
+                    "invalidation_price": 95.0,
+                }
+            }
+        },
+    )
+    qty = execution._calculate_position_size(  # noqa: SLF001 - sizing behavior is the unit under test
+        {
+            "position": {"size_mode": "risk_per_trade", "size_value": 0.01},
+            "backtest": {"initial_capital": 1_000_000},
+        },
+        _snapshot(latest=100.0, open_price=100.0, high=101.0, low=99.0, close=100.0),
+        signal,
+    )
+
+    assert qty == pytest.approx(2_000.0)
+
+
 def _session() -> Session:
     now = datetime.now(UTC)
     return Session(
@@ -399,6 +434,9 @@ def test_smc_confluence_plugin_generates_entry_signal() -> None:
     signal = cast(Signal, result["signal"])
     assert signal.action == SignalAction.ENTER.value
     assert "PLUGIN_SMC_CONFLUENCE_ENTRY" in signal.reason_codes
+    assert signal.explain_payload is not None
+    runtime = cast(dict[str, object], signal.explain_payload["strategy_runtime"])
+    assert cast(dict[str, object], runtime["entry_setup"])["setup_type"] == "smc_confluence_long"
 
 
 def test_smc_confluence_plugin_exit_signal_closes_position() -> None:
@@ -451,6 +489,78 @@ def test_smc_confluence_plugin_exit_signal_closes_position() -> None:
     exit_signal = cast(Signal, exits[0]["signal"])
     assert exit_signal.action == SignalAction.EXIT.value
     assert "PLUGIN_SMC_EXIT_ORDER_BLOCK_BROKEN" in exit_signal.reason_codes
+
+
+def test_hybrid_strategy_generates_entry_signal() -> None:
+    execution, _, _, _ = _services()
+    config = _base_strategy_config()
+    config.update({
+        "type": "hybrid",
+        "entry": {},
+        "hybrid": {
+            "composer_id": "breakout_v1",
+            "composer_config": {
+                "timeframe": "5m",
+                "lookback": 3,
+                "breakout_pct": 0.0,
+                "exit_breakdown_pct": 0.02,
+            },
+        },
+        "execution_modules": {
+            "entry_policy": {"policy_id": "signal_price"},
+            "sizing_policy": {"policy_id": "default_v1"},
+        },
+    })
+
+    result = execution.process_snapshot(
+        _session(),
+        config,
+        _snapshot_with_history([100.0, 101.0, 102.0, 105.0]),
+    )
+
+    assert result["accepted"] is True
+    signal = cast(Signal, result["signal"])
+    assert signal.action == SignalAction.ENTER.value
+    assert "PLUGIN_BREAKOUT_ENTRY" in signal.reason_codes
+    assert signal.explain_payload is not None
+    assert signal.explain_payload["decision"] == "ENTER"
+    runtime = cast(dict[str, object], signal.explain_payload["strategy_runtime"])
+    assert cast(dict[str, object], runtime["entry_setup"])["setup_type"] == "breakout_continuation_long"
+
+
+def test_hybrid_strategy_exit_signal_closes_position() -> None:
+    execution, risk_guard, _, _ = _services()
+    position = _position(stop=50.0, tp=150.0)
+    execution.sync_positions([position])
+    risk_guard.register_position("ses_test_001", "KRW-BTC", PositionState.OPEN)
+
+    config = _base_strategy_config()
+    config.update({
+        "type": "hybrid",
+        "entry": {},
+        "hybrid": {
+            "composer_id": "breakout_v1",
+            "composer_config": {
+                "timeframe": "5m",
+                "lookback": 3,
+                "breakout_pct": 0.03,
+                "exit_breakdown_pct": 0.0,
+            },
+        },
+    })
+
+    result = execution.process_snapshot(
+        _session(),
+        config,
+        _snapshot_with_history([110.0, 109.0, 108.0, 105.0]),
+    )
+
+    assert result["accepted"] is True
+    exits = cast(list[dict[str, object]], result["exits"])
+    assert len(exits) == 1
+    exit_signal = cast(Signal, exits[0]["signal"])
+    assert exit_signal.action == SignalAction.EXIT.value
+    assert "PLUGIN_BREAKDOWN_EXIT" in exit_signal.reason_codes
 
 
 def test_stop_loss_triggered() -> None:
