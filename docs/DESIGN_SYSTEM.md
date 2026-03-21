@@ -38,7 +38,7 @@
 이 UI의 핵심 인상은 아래 5가지입니다.
 
 * **Ultra Dark Base**: 거의 검정에 가까운 딥 네이비/차콜 배경
-* **Neon Green Accent**: 핵심 액션과 활성 상태에 형광 그린 포인트
+* **Electric Blue Primary Accent**: 핵심 액션과 선택 상태에 선명한 블루/시안 포인트
 * **Soft Glass + Inner Glow**: 카드와 패널에 미세한 글로우와 반투명한 깊이감
 * **Dense Financial Layout**: 정보량은 많지만, 카드 분리와 계층으로 정돈
 * **Premium Crypto Dashboard Feel**: 게임스럽지 않고, 고급스럽고 긴장감 있는 금융 UI
@@ -53,8 +53,8 @@
 
 * 배경: 아주 어두운 블랙/네이비
 * 표면: 카드/패널용 다크 그레이-퍼플 톤
-* 강조: 네온 그린
-* 보조: 미세한 블루/민트/옐로우 포인트
+* 강조: 프라이머리 블루/시안
+* 보조: 옅은 민트/옐로우 포인트
 * 상태: 상승/하락 명확 구분
 
 ## 2-2. Core Palette
@@ -76,12 +76,12 @@ bg-overlay        rgba(8, 8, 12, 0.72)
 ### Accent / Brand
 
 ```txt
-brand.primary     #22E76B
-brand.primary-2   #18C95B
-brand.primary-soft rgba(34, 231, 107, 0.14)
-brand.primary-glow rgba(34, 231, 107, 0.28)
-brand.secondary   #7CFFB2
-brand.logo        #1ED760
+brand.primary      #00D1FF
+brand.primary-2    #4CD6FF
+brand.primary-soft rgba(0, 209, 255, 0.14)
+brand.primary-glow rgba(0, 209, 255, 0.32)
+brand.secondary    #A4E6FF
+brand.logo         #00D1FF
 ```
 
 ### Text
@@ -100,7 +100,7 @@ text.inverse      #0F1115
 border.default    rgba(255,255,255,0.08)
 border.soft       rgba(255,255,255,0.05)
 border.strong     rgba(255,255,255,0.12)
-border-accent      rgba(34,231,107,0.45)
+border-accent     rgba(0,209,255,0.28)
 divider           rgba(255,255,255,0.06)
 ```
 
@@ -146,10 +146,10 @@ gradient.card
 linear-gradient(180deg, rgba(255,255,255,0.02) 0%, rgba(255,255,255,0.01) 100%)
 
 gradient.accent-border
-linear-gradient(90deg, rgba(34,231,107,0.45), rgba(34,231,107,0.05))
+linear-gradient(90deg, rgba(0,209,255,0.32), rgba(0,209,255,0.04))
 
-gradient.green-glow
-radial-gradient(circle, rgba(34,231,107,0.22) 0%, rgba(34,231,107,0) 70%)
+gradient.primary-glow
+radial-gradient(circle, rgba(0,209,255,0.22) 0%, rgba(0,209,255,0) 70%)
 ```
 
 ---
@@ -271,11 +271,11 @@ inset 0 1px 0 rgba(255,255,255,0.04)
 ## Glow Tokens
 
 ```txt
-glow.green.sm
-0 0 0 1px rgba(34,231,107,0.28), 0 0 18px rgba(34,231,107,0.18)
+glow.primary.sm
+0 0 0 1px rgba(0,209,255,0.24), 0 0 18px rgba(0,209,255,0.16)
 
-glow.green.md
-0 0 0 1px rgba(34,231,107,0.38), 0 0 28px rgba(34,231,107,0.22)
+glow.primary.md
+0 0 0 1px rgba(0,209,255,0.32), 0 0 28px rgba(0,209,255,0.2)
 
 glow.panel
 0 0 0 1px rgba(255,255,255,0.05), inset 0 1px 0 rgba(255,255,255,0.03)
@@ -318,7 +318,7 @@ main grid gap: 16px
 특징:
 
 * 어두운 캡슐형 컨테이너
-* 활성 아이콘만 네온 그린 배경 또는 하이라이트
+* 활성 아이콘만 프라이머리 블루 배경 또는 하이라이트
 * 비활성은 아이콘만 회색/딤 처리
 
 토큰:
@@ -351,7 +351,7 @@ main grid gap: 16px
 * 페이지 제목과 상태칩은 왼쪽 그룹으로 묶는다
 * 검색/command entry가 가장 길게 간다
 * 오른쪽 액션은 아이콘 + compact chip 형태로 정리한다
-* `LIVE`, degraded, reconnecting 상태는 semantic chip으로 표시하고 브랜드 그린과 혼용하지 않는다
+* `LIVE`, degraded, reconnecting 상태는 semantic chip으로 표시하고 브랜드 프라이머리와 혼용하지 않는다
 
 ---
 
@@ -374,9 +374,9 @@ padding: 16~20px
 핵심 KPI, 활성 세션, 선택된 요약 카드 등에 사용
 
 ```txt
-border: 1px solid rgba(34,231,107,0.35)
-shadow: glow.green.md
-background: linear-gradient(180deg, rgba(34,231,107,0.04), rgba(255,255,255,0.01))
+border: 1px solid rgba(0,209,255,0.24)
+shadow: glow.primary.md
+background: linear-gradient(180deg, rgba(0,209,255,0.08), rgba(255,255,255,0.01))
 ```
 
 ---
@@ -425,7 +425,7 @@ radius: 10~12px
 
 상태:
 
-* focus: `border-accent + green glow`
+* focus: `border-accent + primary glow`
 * error: danger border
 * disabled: 낮은 contrast
 
@@ -559,20 +559,20 @@ radius: pill
 
 # 11. Semantic Usage Rules
 
-## Accent Green 사용 원칙
+## Accent Blue 사용 원칙
 
-초록색이 많아 보이지만, 사실은 제한적으로 써야 고급스럽습니다.
+프라이머리 블루는 제한적으로 써야 고급스럽습니다.
 
-초록색을 써야 하는 곳:
+프라이머리 블루를 써야 하는 곳:
 
 * Primary CTA
 * 활성 탭
 * 선택된 카드
-* 상승 데이터
 * 실시간 강조값
-* 차트 메인 라인
+* 대시보드 `Performance History`의 전략 미니 카드와 주요 전략 요약
+* 차트의 비상태성 강조 포인트
 
-초록색을 남발하면 안 되는 곳:
+프라이머리 블루를 남발하면 안 되는 곳:
 
 * 모든 제목
 * 모든 아이콘
@@ -581,7 +581,7 @@ radius: pill
 
 즉, 전체 화면의 80%는 어두운 중립색,
 15%는 화이트/그레이 텍스트,
-5% 이내만 네온 포인트가 적당합니다.
+5% 이내만 프라이머리 포인트가 적당합니다.
 
 ---
 
@@ -605,15 +605,15 @@ radius: pill
   --text-disabled: #5A606C;
   --text-inverse: #0F1115;
 
-  --brand-primary: #22E76B;
-  --brand-primary-hover: #18C95B;
-  --brand-primary-soft: rgba(34, 231, 107, 0.14);
-  --brand-primary-glow: rgba(34, 231, 107, 0.28);
+  --brand-primary: #00D1FF;
+  --brand-primary-hover: #4CD6FF;
+  --brand-primary-soft: rgba(0, 209, 255, 0.14);
+  --brand-primary-glow: rgba(0, 209, 255, 0.32);
 
   --border-default: rgba(255, 255, 255, 0.08);
   --border-soft: rgba(255, 255, 255, 0.05);
   --border-strong: rgba(255, 255, 255, 0.12);
-  --border-accent: rgba(34, 231, 107, 0.45);
+  --border-accent: rgba(0, 209, 255, 0.28);
 
   --success: #22E76B;
   --danger: #FF5A5F;
@@ -629,9 +629,9 @@ radius: pill
     0 0 0 1px rgba(255,255,255,0.05),
     inset 0 1px 0 rgba(255,255,255,0.03);
 
-  --shadow-green:
-    0 0 0 1px rgba(34,231,107,0.32),
-    0 0 24px rgba(34,231,107,0.18);
+  --shadow-primary:
+    0 0 0 1px rgba(0,209,255,0.28),
+    0 0 24px rgba(0,209,255,0.18);
 
   --space-4: 4px;
   --space-8: 8px;
@@ -655,7 +655,7 @@ radius: pill
 
 ## 버튼
 
-* primary는 형광 그린
+* primary는 프라이머리 블루/시안
 * secondary는 다크 서피스
 * 텍스트 버튼은 최소화
 
@@ -703,8 +703,8 @@ Color/Border/Accent
 
 ```txt
 Effect/Panel/Base
-Effect/Glow/Green-S
-Effect/Glow/Green-M
+Effect/Glow/Primary-S
+Effect/Glow/Primary-M
 Effect/Shadow/Soft
 ```
 
@@ -765,6 +765,7 @@ Text/Micro
 - 권장 컴포넌트: `AppShell`, `TopBar`, `MetricCard`, `StatusChip`, `DataTable`
 - 스타일 원칙:
   - KPI 카드만 선택적으로 accent glow 허용
+  - `Performance History`의 전략 미니 카드와 주요 전략 요약은 프라이머리 블루 계열만 사용한다
   - 리스크/경고 패널은 `warning`/`danger` semantic color만 사용
   - 최근 신호 피드는 카드 안의 dense table/list 패턴으로 처리
 
@@ -774,7 +775,7 @@ Text/Micro
 - 스타일 원칙:
   - 중앙 차트가 시각적 주인공이며 가장 큰 면적을 차지해야 한다
   - 선택된 세션과 활성 심볼만 accent 표현을 사용한다
-  - LIVE, PAPER, degraded 상태는 semantic chip으로 구분하고 브랜드 그린과 혼용하지 않는다
+  - LIVE, PAPER, degraded 상태는 semantic chip으로 구분하고 브랜드 프라이머리와 혼용하지 않는다
 
 ## 17-3. Strategies
 - 목록 화면은 filter bar + dense table 중심으로 구성한다.

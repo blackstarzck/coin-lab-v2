@@ -148,6 +148,12 @@ export interface DashboardOpenPositionPreview {
   unrealized_pnl_pct: number;
 }
 
+export interface DashboardStrategyEntryReadiness {
+  symbol: string;
+  buy_readiness_pct: number | null;
+  sell_readiness_pct: number | null;
+}
+
 export interface DashboardStrategyDetail extends DashboardLeaderboardRow {
   paper_session_count: number;
   live_session_count: number;
@@ -158,6 +164,7 @@ export interface DashboardStrategyDetail extends DashboardLeaderboardRow {
   last_signal_at: string | null;
   description: string | null;
   open_positions: DashboardOpenPositionPreview[];
+  entry_readiness?: DashboardStrategyEntryReadiness[];
 }
 
 export interface DashboardMarketDetail {

@@ -52,17 +52,7 @@
 ### 5.1 기본 API
 - `GET /api/v1/monitoring/summary`
 
-### 5.2 실시간 상태
-- `useMonitoringSummaryStream()`
-- 역할: websocket 연결 상태를 상단 연결 칩에 반영
-
-### 5.3 대시보드 summary 하위 블록
-- `status_bar`
-- `universe_summary`
-- `risk_overview`
-- `dashboard.hero`
-- `dashboard.strategy_strip`
-- `dashboard.market_strip`
+### 5.2 현재 화면에서 사용하는 대시보드 summary 하위 블록
 - `dashboard.performance_history`
 - `dashboard.live_activity`
 - `dashboard.recent_trades`
@@ -70,84 +60,57 @@
 - `dashboard.strategy_details`
 - `dashboard.market_details`
 
+특기 사항:
+- `dashboard.strategy_details.entry_readiness` 는 심볼별 최근 체결 비율이 아니라, 현재 전략 로직의 진입/청산 준비도를 `0~100%`로 정규화한 값이다.
+
+참고:
+- `status_bar`
+- `universe_summary`
+- `risk_overview`
+- `dashboard.hero`
+- `dashboard.strategy_strip`
+- `dashboard.market_strip`
+- 위 블록들은 API 응답에 포함될 수 있지만, 현재 `/` 대시보드 본문에는 렌더링하지 않는다.
+
 ## 6. 전체 레이아웃 구조
 
 대시보드는 아래 순서를 따른다.
 
-1. 페이지 헤더
-2. Hero Summary
-3. Performance History + Live Activity
-4. Recent Trades
-5. Leaderboard
-6. Strategy Details Grid
-7. Market Details
+1. Performance History + Live Activity
+2. Recent Trades
+3. Leaderboard
+4. Strategy Details Grid
+5. Market Details
 
 원칙:
-- 상단일수록 전체 상황 요약
+- 상단일수록 비교와 흐름
 - 중단은 비교와 흐름
 - 하단은 상세 탐색
 
 ## 7. 섹션별 IA
 
-## 7.1 Page Header
-목적:
-- 현재 화면이 “전략 실험실의 메인 보드”임을 명확히 한다.
-
-필수 요소:
-- eyebrow: `COIN LAB DASHBOARD`
-- 제목: `전략 실험 대시보드`
-- 설명 문장
-- websocket 연결 상태 칩
-- `모니터링 열기` CTA
-
-행동:
-- CTA 클릭 시 `/monitoring` 이동
-
-## 7.2 Hero Summary
-목적:
-- 지금 이 순간의 핵심 실험 상태를 1차 요약한다.
-
-구성:
-- hero title
-- hero subtitle
-- 최근 이벤트 시각
-- 전략 스트립
-- 마켓 스트립
-- KPI 4개
-
-KPI:
-- 활성 전략 수
-- 실행 중 세션 수
-- 활성 심볼 수
-- 최근 체결 수
-
-하위 블록:
-- `strategy_strip`: 상위 전략의 이름과 수익률 칩
-- `market_strip`: 현재 관찰 중인 심볼 칩
-
-행동:
-- 전략 스트립 칩 클릭 시 해당 전략 상세로 이동
-
-## 7.3 Performance History
+## 7.1 Performance History
 목적:
 - 전략별 최근 성과 흐름을 비교한다.
 
 구성:
 - 섹션 제목
+- Best strategy 요약 칩
 - SVG 기반 다중 라인 차트
-- 전략별 미니 성과 카드
-- 주요 전략 요약 3개
+- 전략 legend 칩 목록
 
 표현 단위:
 - x축: 최근 체결 기준 시점/상대 구간
 - y축: 전략 수익률
 - line color: 전략별 구분
+- 하단 legend 칩: `brand.primary` 계열 블루 accent 사용
+- semantic `success`/`danger`는 상태 의미가 있을 때만 사용
 
 중심 메시지:
 - 지금 어떤 전략이 상대적으로 우세한지
 - 수익률 방향이 상승/하락 중인지
 
-## 7.4 Live Activity
+## 7.2 Live Activity
 목적:
 - 최근 발생한 실시간 이벤트를 하나의 피드에서 본다.
 
@@ -166,7 +129,7 @@ KPI:
 의미:
 - 신호, 체결, 리스크를 분리된 표가 아니라 하나의 활동 피드로 통합해 문맥을 빠르게 파악하게 한다.
 
-## 7.5 Recent Trades
+## 7.3 Recent Trades
 목적:
 - 최근 체결 로그를 dense table로 확인한다.
 
@@ -182,7 +145,7 @@ KPI:
 - 전략이 실제로 어떤 체결을 만들었는지
 - ENTRY/EXIT/TP/SL 흐름의 최근 결과
 
-## 7.6 Leaderboard
+## 7.4 Leaderboard
 목적:
 - 전략 성과를 표준 지표로 비교한다.
 
@@ -202,28 +165,31 @@ KPI:
 - 어떤 전략이 현재 실험실에서 가장 성과가 좋은가
 - 성과가 좋아도 리스크 이벤트가 많은 전략은 무엇인가
 
-## 7.7 Strategy Details Grid
+## 7.5 Strategy Details Grid
 목적:
 - 전략을 카드 단위로 더 자세히 본다.
 
 카드 구성:
+- 전략 모노그램
 - 전략명
 - 전략 타입
-- 설명
 - 계정 가치
 - 총 수익률
 - 실현 손익
 - 승률
-- 세션/모의/실전/포지션 수
-- 추적 심볼
+- 코인별 전략 진입률(%)
 - 활성 포지션 preview
-- 마지막 신호 시간
 - `열기` 액션
+
+진입률 규칙:
+- 각 전략의 실제 entry/exit 계산식을 기준으로 심볼별 `%`를 만든다.
+- 동일 심볼이라도 전략이 다르면 다른 값이 나올 수 있다.
+- 시장 체결의 `buy/sell` 비중을 공통으로 재사용하지 않는다.
 
 행동:
 - `열기` 클릭 시 전략 상세 페이지 이동
 
-## 7.8 Market Details
+## 7.6 Market Details
 목적:
 - 실험 대상 심볼을 아코디언 형태로 탐색한다.
 
@@ -243,26 +209,24 @@ KPI:
 ## 8. 반응형 규칙
 
 ### 8.1 넓은 화면
-- Hero KPI는 4열
 - Performance History와 Live Activity는 8:4 분할
 - Strategy Details는 3열 카드
 
 ### 8.2 중간 화면
-- Hero KPI는 2열
 - Performance / Activity는 세로 스택 가능
 - Strategy Details는 2열
 
 ### 8.3 작은 화면
 - 모든 섹션은 단일 컬럼
-- 칩/CTA는 줄바꿈 허용
+- 차트 legend 칩은 줄바꿈 허용
 - 테이블은 dense 유지하되 가독성 우선
 
 ## 9. 사용자 흐름
 
 ### 9.1 전체 상태 확인
-1. 헤더에서 연결 상태 확인
-2. Hero에서 현재 실험실 상황 파악
-3. Performance History로 우세 전략 확인
+1. Performance History에서 우세 전략과 성과 흐름 확인
+2. Live Activity에서 최근 신호, 체결, 리스크 맥락 확인
+3. 필요 시 Leaderboard와 Strategy Details로 비교 범위 확장
 
 ### 9.2 전략 탐색
 1. Leaderboard에서 성과가 좋은 전략 확인
@@ -275,12 +239,12 @@ KPI:
 3. 필요 시 모니터링 화면으로 이동
 
 ### 9.4 마켓 탐색
-1. Market Strip에서 활성 심볼 확인
-2. Market Details 아코디언에서 상태 상세 확인
+1. Strategy Details 카드에서 전략별 포지션 맥락 확인
+2. Market Details 아코디언에서 심볼 상태 상세 확인
 
 ## 10. 정보 계층 우선순위
-- Level 1: 페이지 제목, Hero KPI, 주요 CTA
-- Level 2: 성과 차트, Live Activity, Leaderboard
+- Level 1: Performance History, Live Activity
+- Level 2: Leaderboard, Strategy Details
 - Level 3: Recent Trades, Strategy Details
 - Level 4: Market Details, 보조 메타 정보
 
@@ -292,5 +256,5 @@ KPI:
 
 ## 12. 설계 메모
 - 이 화면은 “운영자용 콘솔”이면서 동시에 “전략 실험 전광판”의 성격을 가진다.
-- 따라서 단순 KPI 카드 나열보다, `흐름(Performance / Activity)`과 `비교(Leaderboard / Strategy Grid)`를 동시에 보여주는 현재 구조를 유지한다.
+- 따라서 참조 이미지의 정보 구조를 차용하되, 전역 LNB는 유지하고 본문은 `흐름 + 비교 + 상세` 구조로 압축한다.
 - 화면의 중심 객체는 AI 모델이 아니라 전략이며, IA도 그 기준으로 유지한다.

@@ -85,7 +85,12 @@ class Container:
         signal_generator = SignalGenerator(plugin_registry=plugin_registry)
         execution_service = ExecutionService(risk_guard_service, fill_engine, signal_generator)
         market_ingest_service = MarketIngestService()
-        stream_service = StreamService(store)
+        monitoring_service = MonitoringService(
+            store,
+            market_ingest_service=market_ingest_service,
+            signal_generator=signal_generator,
+        )
+        stream_service = StreamService(store, monitoring_service=monitoring_service)
         runtime_service = RuntimeService(settings, store, stream_service, market_ingest_service, execution_service)
         return cls(
             settings=settings,
@@ -93,7 +98,7 @@ class Container:
             strategy_service=StrategyService(store, strategy_validator),
             session_service=SessionService(store, settings, stream_service),
             backtest_service=BacktestService(store),
-            monitoring_service=MonitoringService(store),
+            monitoring_service=monitoring_service,
             log_service=LogService(store),
             universe_service=UniverseService(store, settings.upbit_rest_base_url),
             stream_service=stream_service,

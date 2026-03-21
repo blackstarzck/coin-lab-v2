@@ -3,15 +3,29 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
+from ...domain.entities.market import ConnectionState, EvaluationTrigger, MarketSnapshot
 from ...domain.entities.session import Order, OrderState, Position, PositionState, Session
+from ...domain.entities.strategy_decision import PluginAction, StrategyDecision
 from ...domain.entities.strategy import Strategy
 from ...infrastructure.repositories.lab_store import LabStore
+from .fill_engine import FillEngine
+from .market_ingest_service import MarketIngestService
+from .signal_generator import SignalGenerator
 from .strategy_performance import StrategyPerformanceSnapshot, build_strategy_performance_map
 
 
 class MonitoringService:
-    def __init__(self, store: LabStore) -> None:
+    def __init__(
+        self,
+        store: LabStore,
+        *,
+        market_ingest_service: MarketIngestService | None = None,
+        signal_generator: SignalGenerator | None = None,
+    ) -> None:
         self.store = store
+        self.market_ingest_service = market_ingest_service or MarketIngestService()
+        self.signal_generator = signal_generator or SignalGenerator()
+        self.fill_engine = FillEngine()
 
     def get_summary(self) -> dict[str, object]:
         sessions = self.store.list_sessions()
@@ -206,6 +220,278 @@ class MonitoringService:
         snapshot_consistency = str(session.health_json.get("snapshot_consistency", "HEALTHY")).upper()
         return connection_state in {"DEGRADED", "DISCONNECTED", "RECONNECTING"} or snapshot_consistency != "HEALTHY"
 
+    def _populate_entry_readiness(
+        self,
+        *,
+        metrics: dict[str, dict[str, object]],
+        running_sessions: list[Session],
+        version_cache: dict[str, object],
+        positions_by_session: dict[str, list[object]],
+    ) -> None:
+        for session in running_sessions:
+            version = version_cache.get(session.strategy_version_id)
+            strategy_id = getattr(version, "strategy_id", None)
+            if not isinstance(strategy_id, str) or strategy_id not in metrics:
+                continue
+            strategy_config = self._strategy_config_for_session(session, version)
+            if not strategy_config:
+                continue
+
+            tracked_symbols = self._active_symbols(session)
+            session_positions = [
+                position
+                for position in positions_by_session.get(session.id, [])
+                if isinstance(position, Position)
+                and position.position_state in {PositionState.OPENING, PositionState.OPEN, PositionState.CLOSING}
+            ]
+            symbol_rows = metrics[strategy_id]["entry_readiness"]
+            if not isinstance(symbol_rows, dict):
+                continue
+
+            for symbol in tracked_symbols:
+                candidate = self._build_entry_readiness_row(
+                    session=session,
+                    strategy_config=strategy_config,
+                    symbol=symbol,
+                    open_positions=session_positions,
+                )
+                if candidate is None:
+                    continue
+                existing = symbol_rows.get(symbol)
+                if not isinstance(existing, dict) or self._entry_row_score(candidate) >= self._entry_row_score(existing):
+                    symbol_rows[symbol] = candidate
+
+    def _build_entry_readiness_row(
+        self,
+        *,
+        session: Session,
+        strategy_config: dict[str, object],
+        symbol: str,
+        open_positions: list[Position],
+    ) -> dict[str, object] | None:
+        snapshot = self.market_ingest_service.build_manual_snapshot(symbol)
+        positions_for_symbol = [position for position in open_positions if position.symbol == symbol]
+        if snapshot is None:
+            return {
+                "symbol": symbol,
+                "buy_readiness_pct": None,
+                "sell_readiness_pct": None,
+            }
+
+        if self._is_snapshot_unusable(strategy_config, snapshot):
+            return {
+                "symbol": symbol,
+                "buy_readiness_pct": 0.0,
+                "sell_readiness_pct": 0.0 if positions_for_symbol else None,
+            }
+
+        buy_readiness = (
+            0.0
+            if self._is_entry_blocked(session, strategy_config, symbol, open_positions)
+            else self._entry_readiness_pct(strategy_config, snapshot)
+        )
+        sell_readiness = self._exit_readiness_pct(
+            strategy_config=strategy_config,
+            snapshot=snapshot,
+            position=positions_for_symbol[0] if positions_for_symbol else None,
+        )
+
+        return {
+            "symbol": symbol,
+            "buy_readiness_pct": buy_readiness,
+            "sell_readiness_pct": sell_readiness,
+        }
+
+    def _is_snapshot_unusable(self, strategy_config: dict[str, object], snapshot: MarketSnapshot) -> bool:
+        if snapshot.connection_state == ConnectionState.DEGRADED:
+            return True
+        trigger = self._strategy_trigger(strategy_config)
+        basis = "tick" if trigger == EvaluationTrigger.ON_TICK_BATCH else self._primary_timeframe(strategy_config)
+        return self.market_ingest_service.is_snapshot_stale(snapshot.snapshot_time, basis)
+
+    def _is_entry_blocked(
+        self,
+        session: Session,
+        strategy_config: dict[str, object],
+        symbol: str,
+        open_positions: list[Position],
+    ) -> bool:
+        if session.status.value != "RUNNING":
+            return True
+
+        risk_cfg = self._as_dict(strategy_config.get("risk"))
+        position_cfg = self._as_dict(strategy_config.get("position"))
+        open_positions_for_symbol = [position for position in open_positions if position.symbol == symbol]
+
+        if bool(risk_cfg.get("prevent_duplicate_entry", False)) and open_positions_for_symbol:
+            return True
+
+        max_per_symbol = max(_as_int(position_cfg.get("max_open_positions_per_symbol")) or 1, 1)
+        if len(open_positions_for_symbol) >= max_per_symbol:
+            return True
+
+        max_concurrent = max(_as_int(position_cfg.get("max_concurrent_positions")) or 1, 1)
+        if len(open_positions) >= max_concurrent and not open_positions_for_symbol:
+            return True
+
+        drawdown_limit_pct = _as_float(risk_cfg.get("max_strategy_drawdown_pct"))
+        max_drawdown_pct = abs(_as_float(session.performance_json.get("max_drawdown_pct")))
+        if drawdown_limit_pct > 0 and max_drawdown_pct >= drawdown_limit_pct:
+            return True
+
+        return False
+
+    def _entry_readiness_pct(self, strategy_config: dict[str, object], snapshot: MarketSnapshot) -> float | None:
+        strategy_type = str(strategy_config.get("type", "dsl"))
+        if strategy_type == "plugin":
+            decision = self.signal_generator.evaluate_plugin_decision(strategy_config, snapshot)
+            return self._decision_readiness_pct(decision, target_action=PluginAction.ENTER.value)
+        if strategy_type == "hybrid":
+            decision = self.signal_generator.evaluate_hybrid_decision(strategy_config, snapshot)
+            return self._decision_readiness_pct(decision, target_action=PluginAction.ENTER.value)
+
+        entry_cfg = self._as_dict(strategy_config.get("entry"))
+        if not entry_cfg:
+            return None
+        evaluation = self.signal_generator.evaluate_block(
+            entry_cfg,
+            snapshot,
+            path="entry",
+            default_timeframe=self._primary_timeframe(strategy_config),
+        )
+        return self._evaluation_readiness_pct(
+            matched_conditions=evaluation.matched_conditions,
+            failed_conditions=evaluation.failed_conditions,
+        )
+
+    def _exit_readiness_pct(
+        self,
+        *,
+        strategy_config: dict[str, object],
+        snapshot: MarketSnapshot,
+        position: Position | None,
+    ) -> float | None:
+        if position is None:
+            return None
+
+        strategy_type = str(strategy_config.get("type", "dsl"))
+        if strategy_type == "plugin":
+            decision = self.signal_generator.evaluate_plugin_decision(strategy_config, snapshot)
+            return self._decision_readiness_pct(decision, target_action=PluginAction.EXIT.value)
+        if strategy_type == "hybrid":
+            decision = self.signal_generator.evaluate_hybrid_decision(strategy_config, snapshot)
+            return self._decision_readiness_pct(decision, target_action=PluginAction.EXIT.value)
+
+        exit_cfg = self._as_dict(strategy_config.get("exit"))
+        if isinstance(exit_cfg.get("logic"), str):
+            evaluation = self.signal_generator.evaluate_block(
+                exit_cfg,
+                snapshot,
+                path="exit",
+                default_timeframe=self._primary_timeframe(strategy_config),
+            )
+            return self._evaluation_readiness_pct(
+                matched_conditions=evaluation.matched_conditions,
+                failed_conditions=evaluation.failed_conditions,
+            )
+
+        current_candle = self._resolve_candle(snapshot, strategy_config)
+        exit_reason = self.fill_engine.evaluate_exit_triggers(
+            position=position,
+            current_price=current_candle["close"],
+            candle_high=current_candle["high"],
+            candle_low=current_candle["low"],
+            exit_config=exit_cfg,
+            bar_count=0,
+        )
+        return 100.0 if exit_reason is not None else 0.0
+
+    def _decision_readiness_pct(self, decision: StrategyDecision | None, *, target_action: str) -> float | None:
+        if decision is None:
+            return None
+        if target_action == PluginAction.EXIT.value and decision.action != PluginAction.EXIT:
+            return 0.0
+        if target_action == PluginAction.ENTER.value and decision.action == PluginAction.EXIT:
+            return 0.0
+        return self._conditions_or_confidence_pct(
+            matched_conditions=decision.matched_conditions,
+            failed_conditions=decision.failed_conditions,
+            confidence=decision.confidence,
+        )
+
+    def _evaluation_readiness_pct(
+        self,
+        *,
+        matched_conditions: list[str],
+        failed_conditions: list[str],
+    ) -> float | None:
+        return self._conditions_or_confidence_pct(
+            matched_conditions=matched_conditions,
+            failed_conditions=failed_conditions,
+            confidence=None,
+        )
+
+    def _conditions_or_confidence_pct(
+        self,
+        *,
+        matched_conditions: list[str],
+        failed_conditions: list[str],
+        confidence: float | None,
+    ) -> float | None:
+        matched_count = len(set(matched_conditions))
+        failed_count = len(set(failed_conditions))
+        total_count = matched_count + failed_count
+        if total_count > 0:
+            return (matched_count / total_count) * 100.0
+        if confidence is None:
+            return None
+        return max(0.0, min(100.0, confidence * 100.0))
+
+    def _strategy_config_for_session(self, session: Session, version: object | None) -> dict[str, object]:
+        config_json = getattr(version, "config_json", None)
+        if isinstance(config_json, dict):
+            return config_json
+        return self._as_dict(session.config_snapshot)
+
+    def _primary_timeframe(self, strategy_config: dict[str, object]) -> str:
+        market = self._as_dict(strategy_config.get("market"))
+        timeframes = market.get("timeframes")
+        if isinstance(timeframes, list) and timeframes:
+            return str(timeframes[0])
+        return "1m"
+
+    def _strategy_trigger(self, strategy_config: dict[str, object]) -> EvaluationTrigger:
+        market = self._as_dict(strategy_config.get("market"))
+        trigger = market.get("trigger") or market.get("evaluation_trigger")
+        if isinstance(trigger, str):
+            try:
+                return EvaluationTrigger(trigger.upper())
+            except ValueError:
+                pass
+        return EvaluationTrigger.ON_CANDLE_CLOSE
+
+    def _resolve_candle(self, snapshot: MarketSnapshot, strategy_config: dict[str, object]) -> dict[str, float]:
+        timeframe = self._primary_timeframe(strategy_config)
+        candle = snapshot.candles.get(timeframe)
+        if candle is None:
+            price = snapshot.latest_price or 0.0
+            return {"open": price, "high": price, "low": price, "close": price}
+        return {"open": candle.open, "high": candle.high, "low": candle.low, "close": candle.close}
+
+    def _entry_row_score(self, row: dict[str, object]) -> float:
+        return max(
+            _as_float(row.get("buy_readiness_pct")),
+            _as_float(row.get("sell_readiness_pct")),
+        )
+
+    def _round_percent(self, value: object) -> float | None:
+        if value is None:
+            return None
+        return round(_as_float(value), 1)
+
+    def _as_dict(self, value: object) -> dict[str, object]:
+        return value if isinstance(value, dict) else {}
+
     def _strategy_cards(
         self,
         strategies: list[object],
@@ -285,6 +571,7 @@ class MonitoringService:
                 "tracked_symbols": set(),
                 "last_signal_at": None,
                 "open_positions": [],
+                "entry_readiness": {},
             }
             for strategy in strategies
         }
@@ -336,6 +623,13 @@ class MonitoringService:
 
             row["risk_alert_count"] = int(row["risk_alert_count"]) + len(risk_events_by_session.get(session.id, []))
 
+        self._populate_entry_readiness(
+            metrics=metrics,
+            running_sessions=running_sessions,
+            version_cache=version_cache,
+            positions_by_session=positions_by_session,
+        )
+
         for strategy_id, row in metrics.items():
             performance = performance_by_strategy.get(strategy_id)
             initial_capital = float(row["initial_capital"])
@@ -374,6 +668,19 @@ class MonitoringService:
                     key=lambda item: abs(_as_float(item["unrealized_pnl_pct"])),
                     reverse=True,
                 )[:3]
+            entry_readiness = row["entry_readiness"]
+            tracked_symbols = row["tracked_symbols"]
+            if isinstance(entry_readiness, dict) and isinstance(tracked_symbols, list):
+                ordered_symbols = tracked_symbols + [symbol for symbol in entry_readiness if symbol not in tracked_symbols]
+                row["entry_readiness"] = [
+                    {
+                        "symbol": symbol,
+                        "buy_readiness_pct": self._round_percent(entry_readiness.get(symbol, {}).get("buy_readiness_pct")),
+                        "sell_readiness_pct": self._round_percent(entry_readiness.get(symbol, {}).get("sell_readiness_pct")),
+                    }
+                    for symbol in ordered_symbols
+                    if symbol in entry_readiness
+                ]
 
         return metrics
 
@@ -699,6 +1006,7 @@ class MonitoringService:
                     "last_signal_at": metrics["last_signal_at"],
                     "description": metrics["description"],
                     "open_positions": metrics["open_positions"],
+                    "entry_readiness": metrics["entry_readiness"],
                 }
             )
         return rows

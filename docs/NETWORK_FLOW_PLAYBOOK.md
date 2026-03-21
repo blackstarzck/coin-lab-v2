@@ -110,6 +110,11 @@ One summary payload can refresh many dashboard widgets together:
 - seven-day return card
 - risk alert list
 - recent signal list
+- strategy-detail entry readiness percentages
+
+Dashboard note:
+- The dashboard strategy cards now read strategy-specific entry readiness from the shared monitoring summary payload.
+- They do not open a separate `/ws/prices` connection just to render buy/sell percentages.
 
 ### Maintenance Note
 If a dashboard widget changes data source, update this document and the monitoring summary dependency list.

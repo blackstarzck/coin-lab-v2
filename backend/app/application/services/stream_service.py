@@ -46,9 +46,9 @@ def _normalize_symbols(symbols: Iterable[str]) -> tuple[str, ...]:
 
 
 class StreamService:
-    def __init__(self, store: LabStore) -> None:
+    def __init__(self, store: LabStore, monitoring_service: MonitoringService | None = None) -> None:
         self.store = store
-        self._monitoring_service = MonitoringService(store)
+        self._monitoring_service = monitoring_service or MonitoringService(store)
         self._lock = threading.RLock()
         self._chart_history: dict[tuple[str, str], deque[dict[str, object]]] = defaultdict(lambda: deque(maxlen=400))
         self._latest_prices: dict[str, dict[str, object | None]] = {}

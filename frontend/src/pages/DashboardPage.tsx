@@ -22,19 +22,9 @@ import {
 } from '@mui/material'
 import { alpha, useTheme } from '@mui/material/styles'
 import type { Theme } from '@mui/material/styles'
-import {
-  Activity,
-  ArrowUpRight,
-  ChevronDown,
-  Crosshair,
-  Layers3,
-  Radio,
-  Wallet,
-} from 'lucide-react'
+import { ChevronDown } from 'lucide-react'
 
 import { useMonitoringSummary } from '@/features/monitoring/api'
-import { useActiveSymbolPrices, type LiveSymbolPrice } from '@/features/monitoring/useActiveSymbolPrices'
-import { useMonitoringSummaryStream } from '@/features/monitoring/useMonitoringSummaryStream'
 import { formatKRW } from '@/shared/lib/format'
 import {
   formatDateTime,
@@ -44,20 +34,12 @@ import {
   translateStrategyType,
 } from '@/shared/lib/i18n'
 import { LabEmptyState } from '@/shared/ui/LabEmptyState'
-import { LabMetricTile } from '@/shared/ui/LabMetricTile'
-import { LabPageHeader } from '@/shared/ui/LabPageHeader'
 import { LabSurfaceCard } from '@/shared/ui/LabSurfaceCard'
 
 export default function DashboardPage() {
   const navigate = useNavigate()
-  const theme = useTheme()
   const { data: summary, isLoading } = useMonitoringSummary()
-  const { isConnected } = useMonitoringSummaryStream()
   const dashboard = summary?.dashboard
-  const trackedSymbols = Array.from(
-    new Set((dashboard?.strategy_details ?? []).flatMap((item) => item.tracked_symbols)),
-  )
-  const { pricesBySymbol } = useActiveSymbolPrices(trackedSymbols)
 
   if (isLoading && summary === undefined) {
     return <DashboardSkeleton />
@@ -65,121 +47,7 @@ export default function DashboardPage() {
 
   return (
     <Box sx={{ mx: 'auto', width: '100%', maxWidth: 1440, pb: 5 }}>
-      <Stack spacing={3}>
-        <LabPageHeader
-          eyebrow="COIN LAB DASHBOARD"
-          title="전략 실험 대시보드"
-          description="전략 실험실의 현재 상태를 실시간으로 모니터링하고, 전략과 세션 성과를 같은 문맥에서 읽을 수 있도록 구성했습니다."
-          actions={(
-            <>
-              <Chip
-                icon={<Radio size={14} />}
-                label={isConnected ? 'WebSocket Connected' : 'Reconnecting'}
-                sx={pillSx(isConnected ? theme.palette.status.success : theme.palette.status.warning)}
-              />
-              <Button variant="contained" endIcon={<ArrowUpRight size={16} />} onClick={() => navigate('/monitoring')}>
-                모니터링 열기
-              </Button>
-            </>
-          )}
-        />
-
-        <LabSurfaceCard
-          dataTestId="dashboard-hero"
-          variant="glass"
-          title={dashboard?.hero.title ?? 'Strategy Arena'}
-          subtitle={dashboard?.hero.subtitle ?? '전략 실험실의 전체 컨텍스트를 한눈에 추적합니다.'}
-          action={
-            dashboard?.hero.latest_event_at ? (
-              <Chip
-                label={`최근 이벤트 ${formatRelativeTime(dashboard.hero.latest_event_at)}`}
-                sx={pillNeutralSx(theme)}
-              />
-            ) : null
-          }
-        >
-          <Stack spacing={2.5}>
-            <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 1 }}>
-              {(dashboard?.strategy_strip ?? []).slice(0, 6).map((item) => (
-                <Chip
-                  key={item.strategy_id}
-                  label={`${item.label} · ${formatSignedPercent(item.return_pct)}`}
-                  onClick={() => navigate(`/strategies/${item.strategy_id}`)}
-                  clickable
-                  sx={pillSx(item.tone === 'danger' ? theme.palette.status.danger : theme.palette.status.success)}
-                />
-              ))}
-            </Stack>
-
-            <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 1 }}>
-              {(dashboard?.market_strip ?? []).map((item) => (
-                <Chip
-                  key={item.symbol}
-                  label={item.symbol}
-                  sx={{
-                    ...pillNeutralSx(theme),
-                    borderColor: item.risk_blocked
-                      ? alpha(theme.palette.status.warning, 0.22)
-                      : item.is_active
-                        ? alpha(theme.palette.primary.main, 0.18)
-                        : theme.palette.border.soft,
-                    color: item.risk_blocked
-                      ? theme.palette.status.warning
-                      : item.is_active
-                        ? theme.palette.primary.main
-                        : theme.palette.text.secondary,
-                  }}
-                />
-              ))}
-            </Stack>
-
-            <Box
-              sx={{
-                display: 'grid',
-                gap: 2,
-                gridTemplateColumns: {
-                  xs: '1fr',
-                  sm: 'repeat(2, minmax(0, 1fr))',
-                  xl: 'repeat(4, minmax(0, 1fr))',
-                },
-              }}
-            >
-              <Box>
-                <LabMetricTile
-                  icon={<Layers3 size={18} />}
-                  label="활성 전략"
-                  value={String(dashboard?.hero.active_strategy_count ?? 0)}
-                  hint={dashboard?.hero.headline_strategy_name ?? '상위 전략 없음'}
-                />
-              </Box>
-              <Box>
-                <LabMetricTile
-                  icon={<Activity size={18} />}
-                  label="실행 중 세션"
-                  value={String(dashboard?.hero.running_session_count ?? summary?.status_bar.running_session_count ?? 0)}
-                  hint={`모의 ${summary?.status_bar.paper_session_count ?? 0} / 실전 ${summary?.status_bar.live_session_count ?? 0}`}
-                />
-              </Box>
-              <Box>
-                <LabMetricTile
-                  icon={<Crosshair size={18} />}
-                  label="활성 심볼"
-                  value={String(dashboard?.hero.active_symbol_count ?? summary?.status_bar.active_symbol_count ?? 0)}
-                  hint={`최근 신호 ${summary?.universe_summary.with_recent_signal_count ?? 0}개`}
-                />
-              </Box>
-              <Box>
-                <LabMetricTile
-                  icon={<Wallet size={18} />}
-                  label="최근 체결"
-                  value={String(dashboard?.hero.recent_trade_count ?? 0)}
-                  hint={`리스크 알림 ${summary?.risk_overview.active_alert_count ?? 0}건`}
-                />
-              </Box>
-            </Box>
-          </Stack>
-        </LabSurfaceCard>
-
+      <Stack spacing={2.5}>
         <Box
           sx={{
             display: 'grid',
@@ -191,79 +59,89 @@ export default function DashboardPage() {
             },
           }}
         >
-          <Box>
+          <Box id="dashboard-performance">
             <LabSurfaceCard
               dataTestId="dashboard-performance-history"
               title="Performance History"
-              subtitle="전략별 최근 성과 흐름을 체결 기준으로 정리했습니다."
+              subtitle="전략별 누적 성과 흐름을 한 화면에서 비교합니다."
             >
-              <PerformanceHistorySection series={dashboard?.performance_history.series ?? []} />
+              <PerformanceHistorySection
+                series={dashboard?.performance_history.series ?? []}
+                bestStrategyName={dashboard?.performance_history.best_strategy_name ?? null}
+              />
             </LabSurfaceCard>
           </Box>
 
-          <Box>
+          <Box id="dashboard-activity">
             <LabSurfaceCard
               dataTestId="dashboard-live-activity"
               title="Live Activity"
-              subtitle="신호, 체결, 리스크 이벤트를 하나의 피드로 묶었습니다."
+              subtitle="신호, 체결, 리스크를 시간순 활동 피드로 압축했습니다."
             >
               <LiveActivitySection items={dashboard?.live_activity ?? []} />
             </LabSurfaceCard>
           </Box>
         </Box>
 
-        <LabSurfaceCard
-          dataTestId="dashboard-trades"
-          title="Last 50 Trades"
-          subtitle="전략이 발생시킨 최근 체결 로그입니다."
-        >
-          <RecentTradesSection rows={dashboard?.recent_trades ?? []} />
-        </LabSurfaceCard>
-
-        <LabSurfaceCard
-          dataTestId="dashboard-leaderboard"
-          title="Leaderboard"
-          subtitle="전략별 수익, 승률, 거래 수를 한 번에 비교합니다."
-        >
-          <LeaderboardSection rows={dashboard?.leaderboard ?? []} />
-        </LabSurfaceCard>
-
-        <LabSurfaceCard
-          dataTestId="dashboard-strategy-grid"
-          title="Strategy Details"
-          subtitle="첨부 이미지의 모델 카드 영역을 전략 카드로 재해석했습니다."
-        >
-          <Box
-            sx={{
-              display: 'grid',
-              gap: 2,
-              gridTemplateColumns: {
-                xs: '1fr',
-                md: 'repeat(2, minmax(0, 1fr))',
-                xl: 'repeat(3, minmax(0, 1fr))',
-              },
-              alignItems: 'stretch',
-            }}
+        <Box id="dashboard-trades">
+          <LabSurfaceCard
+            dataTestId="dashboard-trades"
+            title="Last 50 Trades"
+            subtitle="전략이 남긴 최근 체결 로그를 테이블로 확인합니다."
           >
-            {(dashboard?.strategy_details ?? []).map((item) => (
-              <Box key={item.strategy_id}>
-                <StrategyDetailCard
-                  strategy={item}
-                  pricesBySymbol={pricesBySymbol}
-                  onOpen={() => navigate(`/strategies/${item.strategy_id}`)}
-                />
-              </Box>
-            ))}
-          </Box>
-        </LabSurfaceCard>
+            <RecentTradesSection rows={dashboard?.recent_trades ?? []} />
+          </LabSurfaceCard>
+        </Box>
 
-        <LabSurfaceCard
-          dataTestId="dashboard-market-details"
-          title="Market Details"
-          subtitle="실험 후보군을 심볼 단위로 요약합니다."
-        >
-          <MarketDetailsSection rows={dashboard?.market_details ?? []} />
-        </LabSurfaceCard>
+        <Box id="dashboard-leaderboard">
+          <LabSurfaceCard
+            dataTestId="dashboard-leaderboard"
+            title="Leaderboard"
+            subtitle="전략별 수익률, 손익, 승률, 거래 수를 같은 기준으로 비교합니다."
+          >
+            <LeaderboardSection rows={dashboard?.leaderboard ?? []} />
+          </LabSurfaceCard>
+        </Box>
+
+        <Box id="dashboard-strategies">
+          <LabSurfaceCard
+            dataTestId="dashboard-strategy-grid"
+            title="Strategy Details"
+            subtitle="AI 모델 비교 카드 구조를 전략 상세 카드로 재해석했습니다."
+          >
+            <Box
+              sx={{
+                display: 'grid',
+                gap: 2,
+                gridTemplateColumns: {
+                  xs: '1fr',
+                  md: 'repeat(2, minmax(0, 1fr))',
+                  xl: 'repeat(3, minmax(0, 1fr))',
+                },
+                alignItems: 'stretch',
+              }}
+            >
+              {(dashboard?.strategy_details ?? []).map((item) => (
+                <Box key={item.strategy_id}>
+                  <StrategyDetailCard
+                    strategy={item}
+                    onOpen={() => navigate(`/strategies/${item.strategy_id}`)}
+                  />
+                </Box>
+              ))}
+            </Box>
+          </LabSurfaceCard>
+        </Box>
+
+        <Box id="dashboard-markets">
+          <LabSurfaceCard
+            dataTestId="dashboard-market-details"
+            title="Market Details"
+            subtitle="실험 대상 심볼을 리스트 형태로 빠르게 탐색합니다."
+          >
+            <MarketDetailsSection rows={dashboard?.market_details ?? []} />
+          </LabSurfaceCard>
+        </Box>
       </Stack>
     </Box>
   )
@@ -273,7 +151,6 @@ function DashboardSkeleton() {
   return (
     <Box sx={{ mx: 'auto', width: '100%', maxWidth: 1520 }}>
       <Stack spacing={3}>
-        <Skeleton variant="rounded" height={180} />
         <Grid container spacing={3}>
           <Grid item xs={12} xl={8}>
             <Skeleton variant="rounded" height={420} />
@@ -291,8 +168,26 @@ function DashboardSkeleton() {
   )
 }
 
+function getPrimaryAccentTone(theme: Theme, index: number) {
+  const accentScale = [
+    theme.palette.primary.main,
+    theme.palette.info.main,
+    theme.palette.brand.primaryHover,
+    theme.palette.brand.secondary,
+  ]
+  const tone = accentScale[index % accentScale.length]
+
+  return {
+    tone,
+    border: alpha(tone, 0.2),
+    glow: alpha(tone, 0.54),
+    surface: alpha(tone, 0.08),
+  }
+}
+
 function PerformanceHistorySection({
   series,
+  bestStrategyName,
 }: {
   series: {
     strategy_id: string
@@ -301,59 +196,57 @@ function PerformanceHistorySection({
     return_pct: number
     points: { label: string; timestamp: string | null; value: number }[]
   }[]
+  bestStrategyName: string | null
 }) {
+  const theme = useTheme()
+
   if (series.length === 0) {
     return <LabEmptyState message="전략별 성과 히스토리가 아직 없습니다." />
   }
 
   return (
     <Stack spacing={2.5}>
+      <Stack direction="row" justifyContent="space-between" spacing={1.5} sx={{ flexWrap: 'wrap', gap: 1 }}>
+        <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 1 }}>
+          {bestStrategyName ? (
+            <Chip
+              label={`Best ${bestStrategyName}`}
+              sx={{
+                ...pillSx(theme.palette.primary.main),
+                backgroundColor: alpha(theme.palette.primary.main, 0.12),
+              }}
+            />
+          ) : null}
+          <Chip label={`${series.length}개 전략 추적 중`} sx={pillNeutralSx(theme)} />
+        </Stack>
+        <Typography variant="caption" color="text.secondary">
+          최근 체결 기준 누적 성과
+        </Typography>
+      </Stack>
+
       <StrategyPerformanceChart series={series} />
 
       <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 1 }}>
-        {series.map((item) => (
-          <Box
-            key={item.strategy_id}
-            sx={{
-              minWidth: 180,
-              flex: '1 1 180px',
-              minHeight: 84,
-              borderRadius: '16px',
-              border: `1px solid ${alpha(item.color, 0.12)}`,
-              backgroundColor: alpha(item.color, 0.032),
-              p: 1.5,
-            }}
-          >
-            <Stack direction="row" justifyContent="space-between" spacing={1}>
-              <Typography variant="body2" fontWeight={600}>
-                {item.strategy_name}
-              </Typography>
-              <Typography variant="body2" sx={{ color: item.color, fontVariantNumeric: 'tabular-nums' }}>
-                {formatSignedPercent(item.return_pct)}
-              </Typography>
-            </Stack>
-            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
-              {item.points[item.points.length - 1]?.label ?? '현재'} 기준
-            </Typography>
-          </Box>
-        ))}
-      </Stack>
+        {series.map((item, index) => {
+          const accent = getPrimaryAccentTone(theme, index)
 
-      <Grid container spacing={2}>
-        {series.slice(0, 3).map((item) => (
-          <Grid item xs={12} md={4} key={`summary-${item.strategy_id}`}>
-            <Typography variant="caption" color="text.secondary">
-              주요 전략
-            </Typography>
-            <Typography variant="body1" sx={{ mt: 0.5 }}>
-              {item.strategy_name}
-            </Typography>
-            <Typography variant="h6" sx={{ mt: 0.5, color: item.color }}>
-              {formatSignedPercent(item.return_pct)}
-            </Typography>
-          </Grid>
-        ))}
-      </Grid>
+          return (
+            <Chip
+              key={item.strategy_id}
+              label={`${item.strategy_name} · ${formatSignedPercent(item.return_pct)}`}
+              sx={{
+                borderRadius: 999,
+                color: accent.tone,
+                backgroundColor: accent.surface,
+                border: `1px solid ${accent.border}`,
+                '& .MuiChip-label': {
+                  fontWeight: 700,
+                },
+              }}
+            />
+          )
+        })}
+      </Stack>
     </Stack>
   )
 }
@@ -581,7 +474,7 @@ function RecentTradesSection({
         </TableHead>
         <TableBody>
           {rows.slice(0, 12).map((row) => (
-            <TableRow key={row.id} hover>
+            <TableRow key={row.id}>
               <TableCell>
                 <Typography variant="body2" fontWeight={600}>
                   {row.strategy_name}
@@ -649,7 +542,7 @@ function LeaderboardSection({
         </TableHead>
         <TableBody>
           {rows.map((row, index) => (
-            <TableRow key={row.strategy_id} hover>
+            <TableRow key={row.strategy_id}>
               <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{index + 1}</TableCell>
               <TableCell>
                 <Typography variant="body2" fontWeight={600}>
@@ -691,7 +584,6 @@ function LeaderboardSection({
 
 function StrategyDetailCard({
   strategy,
-  pricesBySymbol,
   onOpen,
 }: {
   strategy: {
@@ -721,12 +613,17 @@ function StrategyDetailCard({
       avg_entry_price: number | null
       unrealized_pnl_pct: number
     }[]
+    entry_readiness?: {
+      symbol: string
+      buy_readiness_pct: number | null
+      sell_readiness_pct: number | null
+    }[]
   }
-  pricesBySymbol: Record<string, LiveSymbolPrice>
   onOpen: () => void
 }) {
   const theme = useTheme()
-  const entryRates = aggregateEntryRates(strategy.tracked_symbols, pricesBySymbol)
+  const entryRateRows = buildStrategyEntryRateRows(strategy.entry_readiness)
+  const accent = getPrimaryAccentTone(theme, Math.abs(hashString(strategy.strategy_id)))
 
   return (
     <Card
@@ -734,18 +631,39 @@ function StrategyDetailCard({
         height: '100%',
         borderRadius: '18px',
         border: `1px solid ${theme.palette.border.soft}`,
-        backgroundColor: alpha(theme.palette.common.white, 0.008),
+        background:
+          `radial-gradient(circle at top right, ${alpha(accent.tone, 0.12)} 0%, transparent 30%), ` +
+          `linear-gradient(180deg, ${alpha(theme.palette.common.white, 0.02)} 0%, ${alpha(theme.palette.common.white, 0.01)} 100%)`,
       }}
     >
       <CardContent sx={{ p: 2.25, height: '100%', display: 'flex', flexDirection: 'column' }}>
         <Stack sx={{ height: '100%' }}>
           <Stack direction="row" justifyContent="space-between" spacing={1.5} sx={{ mb: 1.75 }}>
-            <Box sx={{ minWidth: 0 }}>
-              <Typography variant="h6">{strategy.strategy_name}</Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.4 }}>
-                {translateStrategyType(strategy.strategy_type)}
-              </Typography>
-            </Box>
+            <Stack direction="row" spacing={1.25} sx={{ minWidth: 0 }}>
+              <Box
+                sx={{
+                  width: 42,
+                  height: 42,
+                  display: 'grid',
+                  placeItems: 'center',
+                  borderRadius: '14px',
+                  color: accent.tone,
+                  backgroundColor: alpha(accent.tone, 0.14),
+                  border: `1px solid ${alpha(accent.tone, 0.18)}`,
+                  flexShrink: 0,
+                }}
+              >
+                <Typography variant="subtitle1" sx={{ color: 'inherit' }}>
+                  {strategyMonogram(strategy.strategy_name)}
+                </Typography>
+              </Box>
+              <Box sx={{ minWidth: 0 }}>
+                <Typography variant="h6">{strategy.strategy_name}</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.4 }}>
+                  {translateStrategyType(strategy.strategy_type)}
+                </Typography>
+              </Box>
+            </Stack>
             <Button
               variant="text"
               onClick={onOpen}
@@ -764,67 +682,54 @@ function StrategyDetailCard({
           </Box>
 
           <Grid container spacing={1.5} sx={{ mb: 2 }}>
-          <Grid item xs={6}>
-            <MiniMetric label="계정 가치" value={formatCompactKRW(strategy.account_value)} tone="neutral" />
+            <Grid item xs={6}>
+              <MiniMetric label="계정 가치" value={formatCompactKRW(strategy.account_value)} tone="neutral" />
+            </Grid>
+            <Grid item xs={6}>
+              <MiniMetric label="총 수익률" value={formatSignedPercent(strategy.return_pct)} tone={strategy.return_pct >= 0 ? 'positive' : 'negative'} />
+            </Grid>
+            <Grid item xs={6}>
+              <MiniMetric label="실현 손익" value={formatSignedKRW(strategy.realized_pnl)} tone={strategy.realized_pnl >= 0 ? 'positive' : 'negative'} />
+            </Grid>
+            <Grid item xs={6}>
+              <MiniMetric label="승률" value={strategy.win_rate_pct === null ? '-' : `${strategy.win_rate_pct.toFixed(1)}%`} tone="neutral" />
+            </Grid>
           </Grid>
-          <Grid item xs={6}>
-            <MiniMetric label="총 수익률" value={formatSignedPercent(strategy.return_pct)} tone={strategy.return_pct >= 0 ? 'positive' : 'negative'} />
-          </Grid>
-          <Grid item xs={6}>
-            <MiniMetric label="실현 손익" value={formatSignedKRW(strategy.realized_pnl)} tone={strategy.realized_pnl >= 0 ? 'positive' : 'negative'} />
-          </Grid>
-          <Grid item xs={6}>
-            <MiniMetric label="승률" value={strategy.win_rate_pct === null ? '-' : `${strategy.win_rate_pct.toFixed(1)}%`} tone="neutral" />
-          </Grid>
-          </Grid>
-
-          <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 1, mb: 2 }}>
-            <Chip label={monitoringStateLabel(strategy.monitoring_state)} sx={monitoringStateChipSx(theme, strategy.monitoring_state)} />
-            <Chip label={`세션 ${strategy.active_session_count}`} sx={pillNeutralSx(theme)} />
-            <Chip label={`모의 ${strategy.paper_session_count}`} sx={pillNeutralSx(theme)} />
-            <Chip label={`실전 ${strategy.live_session_count}`} sx={pillNeutralSx(theme)} />
-            <Chip label={`포지션 ${strategy.active_position_count}`} sx={pillNeutralSx(theme)} />
-            {strategy.degraded_session_count > 0 ? (
-              <Chip label={`지연 ${strategy.degraded_session_count}`} sx={pillSx(theme.palette.status.warning)} />
-            ) : null}
-          </Stack>
-
-          <Typography variant="caption" color="text.secondary">
-            추적 심볼
-          </Typography>
-          <Stack direction="row" spacing={0.75} sx={{ flexWrap: 'wrap', gap: 0.75, mt: 0.75, mb: 2, minHeight: 36 }}>
-            {strategy.tracked_symbols.length === 0 ? (
-              <Chip label="심볼 없음" size="small" sx={pillNeutralSx(theme)} />
-            ) : (
-              strategy.tracked_symbols.map((symbol) => (
-                <Chip key={symbol} label={symbol} size="small" sx={pillNeutralSx(theme)} />
-              ))
-            )}
-          </Stack>
 
           <Typography variant="caption" color="text.secondary">
             실시간 진입률
           </Typography>
-          <Grid container spacing={1.5} sx={{ mt: 0.75, mb: 2 }}>
-            <Grid item xs={6}>
-              <MiniMetric
-                label="매수"
-                value={entryRates.buyRateLabel}
-                tone={entryRates.buyRate !== null && entryRates.buyRate >= 50 ? 'positive' : 'neutral'}
-              />
-            </Grid>
-            <Grid item xs={6}>
-              <MiniMetric
-                label="매도"
-                value={entryRates.sellRateLabel}
-                tone={entryRates.sellRate !== null && entryRates.sellRate >= 50 ? 'negative' : 'neutral'}
-              />
-            </Grid>
-          </Grid>
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: -0.5 }}>
-            {entryRates.windowLabel}
-            {entryRates.coveredSymbolCount > 0 ? ` · ${entryRates.coveredSymbolCount}개 심볼 평균` : ''}
-          </Typography>
+          <Stack spacing={1} sx={{ mt: 0.9, mb: 2 }}>
+            {entryRateRows.length === 0 ? (
+              <Typography variant="body2" color="text.secondary">
+                진입률 데이터 대기 중
+              </Typography>
+            ) : (
+              entryRateRows.map((row) => (
+                <Box
+                  key={`${strategy.strategy_id}-entry-rate-${row.symbol}`}
+                  sx={{
+                    borderRadius: '12px',
+                    border: `1px solid ${theme.palette.border.soft}`,
+                    backgroundColor: alpha(theme.palette.common.white, 0.008),
+                    p: 1.2,
+                  }}
+                >
+                  <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                    <Typography variant="body2" fontWeight={600} sx={{ minWidth: 0 }}>
+                      {row.symbol}
+                    </Typography>
+                    <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap', gap: 2, justifyContent: 'flex-end' }}>
+                      <EntryRateValue label="매수" value={row.buyRate} side="buy" />
+                      {row.showSell ? (
+                        <EntryRateValue label="매도" value={row.sellRate} side="sell" />
+                      ) : null}
+                    </Stack>
+                  </Stack>
+                </Box>
+              ))
+            )}
+          </Stack>
 
           <Divider sx={{ borderColor: theme.palette.border.soft, my: 1.75 }} />
 
@@ -1025,60 +930,64 @@ function pillNeutralSx(theme: Theme) {
   }
 }
 
-function monitoringStateLabel(state: string) {
-  switch (state) {
-    case 'running':
-      return '모니터링 중'
-    case 'degraded':
-      return '데이터 지연'
-    default:
-      return '대기'
-  }
+function buildStrategyEntryRateRows(
+  entryReadiness:
+    | {
+        symbol: string
+        buy_readiness_pct: number | null
+        sell_readiness_pct: number | null
+      }[]
+    | undefined,
+) {
+  return (entryReadiness ?? []).map((row) => ({
+    symbol: row.symbol,
+    buyRate: row.buy_readiness_pct,
+    sellRate: row.sell_readiness_pct,
+    showSell: row.sell_readiness_pct !== null,
+  }))
 }
 
-function monitoringStateChipSx(theme: Theme, state: string) {
-  switch (state) {
-    case 'running':
-      return pillSx(theme.palette.status.success)
-    case 'degraded':
-      return pillSx(theme.palette.status.warning)
-    default:
-      return pillNeutralSx(theme)
-  }
+function formatRateValue(value: number | null) {
+  return value === null ? '-' : `${value.toFixed(1)}%`
 }
 
-function aggregateEntryRates(symbols: string[], pricesBySymbol: Record<string, LiveSymbolPrice>) {
-  const tracked = symbols
-    .map((symbol) => pricesBySymbol[symbol])
-    .filter((item): item is LiveSymbolPrice => item !== undefined)
+function EntryRateValue({
+  label,
+  value,
+  side,
+}: {
+  label: string
+  value: number | null
+  side: 'buy' | 'sell'
+}) {
+  const theme = useTheme()
+  const color =
+    side === 'buy'
+      ? value !== null && value >= 50
+        ? theme.palette.status.success
+        : theme.palette.primary.main
+      : value !== null && value >= 50
+        ? theme.palette.status.danger
+        : theme.palette.info.main
 
-  const buyValues = tracked
-    .map((item) => item.buy_entry_rate_pct)
-    .filter((value): value is number => value !== null)
-  const sellValues = tracked
-    .map((item) => item.sell_entry_rate_pct)
-    .filter((value): value is number => value !== null)
-  const windows = tracked
-    .map((item) => item.entry_rate_window_sec)
-    .filter((value): value is number => value !== null)
-
-  const buyRate = buyValues.length ? buyValues.reduce((sum, value) => sum + value, 0) / buyValues.length : null
-  const sellRate = sellValues.length ? sellValues.reduce((sum, value) => sum + value, 0) / sellValues.length : null
-  const windowSec = windows.length ? windows[0] : null
-
-  return {
-    buyRate,
-    sellRate,
-    buyRateLabel: buyRate === null ? '-' : `${buyRate.toFixed(1)}%`,
-    sellRateLabel: sellRate === null ? '-' : `${sellRate.toFixed(1)}%`,
-    windowLabel:
-      windowSec === null
-        ? '진입률 데이터 대기 중'
-        : windowSec % 60 === 0
-          ? `최근 ${windowSec / 60}분 체결 기준`
-          : `최근 ${windowSec}초 체결 기준`,
-    coveredSymbolCount: tracked.length,
-  }
+  return (
+    <Box sx={{ textAlign: 'right', minWidth: 72 }}>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.2 }}>
+        {label}
+      </Typography>
+      <Typography
+        variant="h6"
+        sx={{
+          color,
+          fontSize: 22,
+          lineHeight: 1,
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        {formatRateValue(value)}
+      </Typography>
+    </Box>
+  )
 }
 
 function toneColor(theme: Theme, tone: string) {
@@ -1094,6 +1003,19 @@ function toneColor(theme: Theme, tone: string) {
     default:
       return theme.palette.primary.main
   }
+}
+
+function strategyMonogram(value: string) {
+  return value
+    .split(/[\s/-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? '')
+    .join('')
+}
+
+function hashString(value: string) {
+  return value.split('').reduce((acc, char) => (acc * 31 + char.charCodeAt(0)) % 997, 7)
 }
 
 function formatCompactKRW(value: number) {
