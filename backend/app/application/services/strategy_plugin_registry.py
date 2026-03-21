@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from app.domain.interfaces import StrategyPlugin
+from app.domain.interfaces import StrategyPlugin, StrategyPluginMetadata
 from app.plugins import BUILTIN_STRATEGY_PLUGINS
 
 
@@ -22,3 +22,6 @@ class StrategyPluginRegistry:
 
     def ids(self) -> tuple[str, ...]:
         return tuple(sorted(self._plugins.keys()))
+
+    def list_metadata(self) -> tuple[StrategyPluginMetadata, ...]:
+        return tuple(self._plugins[plugin_id].metadata() for plugin_id in sorted(self._plugins.keys()))

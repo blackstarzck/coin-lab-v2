@@ -30,6 +30,29 @@ def is_strong_directional_candle(
     return matched, body_ratio, body_pct
 
 
+def true_range(candle: CandleState, prev_close: float | None) -> float:
+    candle_range = max(candle.high - candle.low, 0.0)
+    if prev_close is None:
+        return candle_range
+    return max(candle_range, abs(candle.high - prev_close), abs(candle.low - prev_close))
+
+
+def average_true_range(candles: list[CandleState], period: int) -> list[float | None]:
+    atr: list[float | None] = [None] * len(candles)
+    if period <= 0:
+        return atr
+
+    tr_values: list[float] = []
+    prev_close: float | None = None
+    for index, candle in enumerate(candles):
+        tr_values.append(true_range(candle, prev_close))
+        prev_close = candle.close
+        if index >= period - 1:
+            window = tr_values[index - period + 1 : index + 1]
+            atr[index] = sum(window) / len(window)
+    return atr
+
+
 def is_confirmation_candle(candle: CandleState, *, direction: str = "bullish") -> bool:
     candle_range = max(candle.high - candle.low, 0.0)
     if candle_range <= 0:

@@ -83,3 +83,4 @@ class MonitoringSummaryResponse(BaseModel):
     universe_summary: UniverseSummary
     risk_overview: RiskOverview
     recent_signals: list[RecentSignal] = Field(default_factory=list)
+    dashboard: dict[str, object] = Field(default_factory=dict)

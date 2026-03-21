@@ -247,6 +247,85 @@ def _snapshot_with_custom_candles(
     )
 
 
+def _snapshot_with_ob_fvg_context(*, current_close: float = 108.0, bull_mode_on: bool = True) -> MarketSnapshot:
+    now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+    symbol = "KRW-BTC"
+
+    def build_series(
+        candles: list[dict[str, float]],
+        *,
+        timeframe: str,
+        end_time: datetime,
+    ) -> list[CandleState]:
+        if timeframe.endswith("m"):
+            delta = timedelta(minutes=int(timeframe[:-1]))
+        else:
+            delta = timedelta(hours=int(timeframe[:-1]))
+        series: list[CandleState] = []
+        for index, candle in enumerate(candles):
+            candle_time = end_time - (len(candles) - 1 - index) * delta
+            series.append(
+                CandleState(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    open=float(candle["open"]),
+                    high=float(candle["high"]),
+                    low=float(candle["low"]),
+                    close=float(candle["close"]),
+                    volume=float(candle.get("volume", 100.0 + index)),
+                    candle_start=candle_time,
+                    is_closed=True,
+                    last_update=candle_time,
+                )
+            )
+        return series
+
+    candles_15m = build_series(
+        [
+            {"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5},
+            {"open": 101.0, "high": 103.0, "low": 100.0, "close": 102.0},
+            {"open": 101.0, "high": 102.0, "low": 99.0, "close": 100.0},
+            {"open": 100.0, "high": 108.0, "low": 99.8, "close": 107.5},
+            {"open": 103.5, "high": max(current_close + 1.0, 109.0), "low": 98.5 if current_close < 100.0 else 103.0, "close": current_close},
+        ],
+        timeframe="15m",
+        end_time=now,
+    )
+
+    if bull_mode_on:
+        hourly_seed = [
+            {"open": 102.0, "high": 110.0, "low": 100.0, "close": 105.0},
+            {"open": 108.0, "high": 120.0, "low": 106.0, "close": 118.0},
+            {"open": 114.0, "high": 115.0, "low": 104.0, "close": 110.0},
+            {"open": 120.0, "high": 130.0, "low": 112.0, "close": 128.0},
+            {"open": 122.0, "high": 125.0, "low": 110.0, "close": 121.0},
+            {"open": 126.0, "high": 136.0, "low": 118.0, "close": 134.0},
+        ]
+    else:
+        hourly_seed = [
+            {"open": 120.0, "high": 130.0, "low": 110.0, "close": 128.0},
+            {"open": 124.0, "high": 126.0, "low": 112.0, "close": 115.0},
+            {"open": 116.0, "high": 132.0, "low": 114.0, "close": 130.0},
+            {"open": 129.0, "high": 130.0, "low": 108.0, "close": 110.0},
+            {"open": 112.0, "high": 118.0, "low": 105.0, "close": 107.0},
+            {"open": 108.0, "high": 112.0, "low": 101.0, "close": 103.0},
+        ]
+
+    candles_1h = build_series(hourly_seed, timeframe="1h", end_time=now - timedelta(hours=1))
+    current_15m = candles_15m[-1]
+    current_1h = candles_1h[-1]
+    return MarketSnapshot(
+        symbol=symbol,
+        latest_price=current_15m.close,
+        candles={"15m": current_15m, "1h": current_1h},
+        volume_24h=1000.0,
+        snapshot_time=current_15m.candle_start,
+        candle_history={"15m": tuple(candles_15m[:-1]), "1h": tuple(candles_1h[:-1])},
+        is_stale=False,
+        connection_state=ConnectionState.CONNECTED,
+    )
+
+
 def _position(*, stop: float, tp: float, qty: float = 1.0) -> Position:
     return Position(
         id="pos_test_001",
@@ -489,6 +568,99 @@ def test_smc_confluence_plugin_exit_signal_closes_position() -> None:
     exit_signal = cast(Signal, exits[0]["signal"])
     assert exit_signal.action == SignalAction.EXIT.value
     assert "PLUGIN_SMC_EXIT_ORDER_BLOCK_BROKEN" in exit_signal.reason_codes
+
+
+def test_ob_fvg_bull_reclaim_plugin_generates_entry_signal_with_runtime_risk() -> None:
+    execution, _, _, _ = _services()
+    config = _base_strategy_config()
+    config.update({
+        "type": "plugin",
+        "plugin_id": "ob_fvg_bull_reclaim_v1",
+        "plugin_version": "1.0.0",
+        "plugin_config": {
+            "timeframe": "15m",
+            "trend_timeframe": "1h",
+            "swing_width": 1,
+            "atr_length": 2,
+            "atr_mult": 1.1,
+            "body_ratio_threshold": 0.45,
+            "ob_lookback": 3,
+            "poi_expiry_bars": 8,
+            "sl_buffer_pct": 0.001,
+            "rr_target": 1.8,
+            "time_exit_bars": 20,
+            "require_prev_close": False,
+        },
+        "market": {"timeframes": ["15m", "1h"]},
+        "entry": {},
+        "exit": {
+            "time_stop_bars": 20,
+            "runtime_condition_exit": {
+                "fact_label": "composer.ob_fvg_bull_reclaim_v1.bull_mode_on",
+                "when_value": False,
+                "require_loss": True,
+                "reason_code": "PLUGIN_OB_FVG_BULL_MODE_OFF",
+            },
+        },
+    })
+
+    result = execution.process_snapshot(_session(), config, _snapshot_with_ob_fvg_context())
+
+    assert result["accepted"] is True
+    signal = cast(Signal, result["signal"])
+    position = cast(Position, result["position"])
+    assert signal.action == SignalAction.ENTER.value
+    assert "PLUGIN_OB_FVG_BULL_RECLAIM_ENTRY" in signal.reason_codes
+    assert position.stop_loss_price == pytest.approx(98.901, rel=1e-6)
+    assert position.take_profit_price == pytest.approx(124.3782, rel=1e-6)
+
+
+def test_ob_fvg_bull_reclaim_runtime_condition_exit_closes_losing_position() -> None:
+    execution, risk_guard, _, _ = _services()
+    position = _position(stop=95.0, tp=130.0)
+    execution.sync_positions([position])
+    risk_guard.register_position("ses_test_001", "KRW-BTC", PositionState.OPEN)
+
+    config = _base_strategy_config()
+    config.update({
+        "type": "plugin",
+        "plugin_id": "ob_fvg_bull_reclaim_v1",
+        "plugin_version": "1.0.0",
+        "plugin_config": {
+            "timeframe": "15m",
+            "trend_timeframe": "1h",
+            "swing_width": 1,
+            "atr_length": 2,
+            "atr_mult": 1.1,
+            "body_ratio_threshold": 0.45,
+            "ob_lookback": 3,
+            "poi_expiry_bars": 8,
+            "sl_buffer_pct": 0.001,
+            "rr_target": 1.8,
+            "time_exit_bars": 20,
+            "require_prev_close": False,
+        },
+        "market": {"timeframes": ["15m", "1h"]},
+        "entry": {},
+        "exit": {
+            "time_stop_bars": 20,
+            "runtime_condition_exit": {
+                "fact_label": "composer.ob_fvg_bull_reclaim_v1.bull_mode_on",
+                "when_value": False,
+                "require_loss": True,
+                "reason_code": "PLUGIN_OB_FVG_BULL_MODE_OFF",
+            },
+        },
+    })
+
+    result = execution.process_snapshot(_session(), config, _snapshot_with_ob_fvg_context(current_close=99.0, bull_mode_on=False))
+
+    assert result["accepted"] is True
+    exits = cast(list[dict[str, object]], result["exits"])
+    assert len(exits) == 1
+    exit_signal = cast(Signal, exits[0]["signal"])
+    assert exit_signal.action == SignalAction.EXIT.value
+    assert "PLUGIN_OB_FVG_BULL_MODE_OFF" in exit_signal.reason_codes
 
 
 def test_hybrid_strategy_generates_entry_signal() -> None:

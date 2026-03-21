@@ -15,15 +15,12 @@ export function useIncrementalTableRows<T>({
   resetKey,
   rootRef,
 }: UseIncrementalTableRowsOptions<T>) {
-  const [visibleCount, setVisibleCount] = useState(pageSize)
+  const [state, setState] = useState({
+    resetKey,
+    visibleCount: pageSize,
+  })
   const sentinelRef = useRef<HTMLDivElement | null>(null)
-
-  useEffect(() => {
-    if (!enabled) {
-      return
-    }
-    setVisibleCount(pageSize)
-  }, [enabled, pageSize, resetKey])
+  const visibleCount = state.resetKey === resetKey ? state.visibleCount : pageSize
 
   useEffect(() => {
     if (!enabled || visibleCount >= items.length) {
@@ -43,7 +40,13 @@ export function useIncrementalTableRows<T>({
           return
         }
 
-        setVisibleCount((current) => Math.min(current + pageSize, items.length))
+        setState((current) => {
+          const currentVisibleCount = current.resetKey === resetKey ? current.visibleCount : pageSize
+          return {
+            resetKey,
+            visibleCount: Math.min(currentVisibleCount + pageSize, items.length),
+          }
+        })
       },
       {
         root,
@@ -54,7 +57,7 @@ export function useIncrementalTableRows<T>({
 
     observer.observe(target)
     return () => observer.disconnect()
-  }, [enabled, items.length, pageSize, rootRef, visibleCount])
+  }, [enabled, items.length, pageSize, resetKey, rootRef, visibleCount])
 
   const visibleItems = useMemo(
     () => items.slice(0, visibleCount),

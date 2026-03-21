@@ -643,3 +643,91 @@
   - clearer distinction between live-price updates and detail polling
 - next work:
   - investigate backend-side contention under live runtime load so the local port `8012` path can be restored without relying on the temporary `8014` override
+
+## 2026-03-21 08:20:00 +09:00
+- changed files:
+  - CHANGELOG_AGENT.md
+  - TEST_CASES.md
+  - frontend/src/features/monitoring/EventLogHelpPopover.tsx
+  - frontend/src/features/monitoring/eventLogGuide.ts
+  - frontend/src/main.tsx
+  - frontend/src/odometer-theme-minimal.css
+  - frontend/src/pages/BacktestsPage.tsx
+  - frontend/src/pages/DashboardPage.tsx
+  - frontend/src/pages/MonitoringPage.tsx
+  - frontend/src/pages/StrategiesPage.tsx
+  - frontend/src/shared/ui/AnimatedOdometer.tsx
+  - frontend/src/shared/ui/useAnimatedTableRows.ts
+  - frontend/src/shared/ui/useIncrementalTableRows.ts
+- change type: frontend stabilization and validation cleanup
+- summary:
+  - removed hook-order and effect-driven state issues that could destabilize dashboard, monitoring, strategies, and backtest pages under current React lint/runtime rules
+  - kept monitoring signal selection and strategy/session selection aligned through derived state instead of corrective effects
+  - replaced the third-party odometer theme import with an equivalent local stylesheet so frontend production builds complete without CSS minifier warnings
+  - added traceability test cases for dashboard profitability visibility, abnormal monitoring states, and analysis-oriented signal explain behavior
+- reason:
+  - finish the current page pass with clean frontend quality gates and make the monitoring/dashboard surfaces safer to maintain
+- impact:
+  - dashboard stability
+  - monitoring detail consistency
+  - strategy/backtest form behavior
+  - frontend build cleanliness
+- impacted modes:
+  - BACKTEST
+  - PAPER
+  - LIVE
+- spec documents updated:
+  - TEST_CASES.md
+  - CHANGELOG_AGENT.md
+- test cases added/updated:
+  - added `TC-UI-005`
+  - added `TC-UI-006`
+  - added `TC-UI-007`
+  - expanded `suite_release_gate` to include `TC-UI-006`
+- next work:
+  - rerun Playwright E2E in an environment that permits localhost port binding so the UI smoke tests can execute against the real web server stack
+
+## 2026-03-21 10:15:00 +09:00
+- changed files:
+  - CHANGELOG_AGENT.md
+  - DESIGN_SYSTEM.md
+  - MONITORING_SCREEN_SPEC.md
+  - NETWORK_FLOW_PLAYBOOK.md
+  - PRD.md
+  - TEST_CASES.md
+  - UI_IA.md
+  - frontend/e2e/monitoring-layout.spec.ts
+  - frontend/e2e/strategy-plugin-metadata.spec.ts
+  - frontend/src/pages/MonitoringPage.tsx
+  - frontend/src/pages/StrategyEditPage.tsx
+- change type: monitoring IA alignment and strategy edit tab naming cleanup
+- summary:
+  - split monitoring `Session Detail` into `Event Log / Strategy Explain / Signals / Orders / Risk` tabs instead of the previous merged signal-order surface
+  - kept signal-to-explain selection shared between chart markers and `Signals` rows while preserving existing monitoring runtime controls
+  - renamed the strategy-edit tail tabs to `Diff Preview`, `JSON Editor`, and `Validation` so the UI matches the documented editor structure without changing plugin metadata flows
+  - updated monitoring and strategy-edit documentation plus mapped UI test cases to the aligned IA
+- reason:
+  - resolve QA-reported mismatches between the implemented UI and the documented information architecture
+- impact:
+  - monitoring detail navigation
+  - strategy editing terminology
+  - documentation-to-code consistency
+- impacted modes:
+  - BACKTEST
+  - PAPER
+  - LIVE
+- spec documents updated:
+  - DESIGN_SYSTEM.md
+  - UI_IA.md
+  - MONITORING_SCREEN_SPEC.md
+  - PRD.md
+  - NETWORK_FLOW_PLAYBOOK.md
+  - TEST_CASES.md
+  - CHANGELOG_AGENT.md
+- test cases added/updated:
+  - added `TC-UI-008`
+  - added `TC-UI-009`
+  - updated `frontend/e2e/monitoring-layout.spec.ts`
+  - updated `frontend/e2e/strategy-plugin-metadata.spec.ts`
+- next work:
+  - validate the split-tab monitoring flow against richer seeded runtime data once order and risk fixture coverage is expanded

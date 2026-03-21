@@ -24,6 +24,7 @@ This folder is the consolidated final document pack for the project.
    - [DESIGN_SYSTEM.md](./DESIGN_SYSTEM.md)
    - [AI_UI_STYLE_GUIDE.md](./AI_UI_STYLE_GUIDE.md)
    - [UI_IA.md](./UI_IA.md)
+   - [DASHBOARD_IA.md](./DASHBOARD_IA.md)
    - [MONITORING_SCREEN_SPEC.md](./MONITORING_SCREEN_SPEC.md)
 7. Read the implementation SSOT docs in priority order:
    - [CODING_GUIDELINES.md](./CODING_GUIDELINES.md)

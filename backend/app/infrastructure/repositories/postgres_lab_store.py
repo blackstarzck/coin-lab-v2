@@ -262,7 +262,9 @@ class PostgresLabStore(LabStore):
     # ── seed ──────────────────────────────────────────────────────────────
 
     def seed_defaults(self) -> None:
-        return None
+        from .default_strategy_seeds import seed_default_strategies
+
+        seed_default_strategies(self)
 
     # ── strategies ────────────────────────────────────────────────────────
 

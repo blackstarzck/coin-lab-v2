@@ -40,7 +40,9 @@ class InMemoryLabStore(LabStore):
         self._universe: list[dict[str, object]] = []
 
     def seed_defaults(self) -> None:
-        return None
+        from .default_strategy_seeds import seed_default_strategies
+
+        seed_default_strategies(self)
 
     def create_strategy(self, strategy: Strategy) -> Strategy:
         self._strategies[strategy.id] = strategy

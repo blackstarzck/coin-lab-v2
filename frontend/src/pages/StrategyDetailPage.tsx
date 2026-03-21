@@ -22,7 +22,7 @@ import {
 } from '@mui/material'
 import type { ChipProps } from '@mui/material'
 import { Edit2, Play, ChevronDown, ChevronUp, ArrowLeft } from 'lucide-react'
-import { useStrategy, useStrategyVersions } from '@/features/strategies/api'
+import { useStrategy, useStrategyPlugins, useStrategyVersions } from '@/features/strategies/api'
 import { useSessions } from '@/features/sessions/api'
 import { useBacktests } from '@/features/backtests/api'
 import {
@@ -34,10 +34,11 @@ import {
   translateStrategyType,
 } from '@/shared/lib/i18n'
 import {
-  formatBuiltinPluginConfigValue,
-  getBuiltinPluginOption,
-  getBuiltinPluginSummaryFields,
+  formatPluginConfigValue,
+  getPluginOption,
+  getPluginSummaryFields,
 } from '@/features/strategies/pluginCatalog'
+import { LabPageHeader } from '@/shared/ui/LabPageHeader'
 
 type JsonObject = Record<string, unknown>
 
@@ -50,6 +51,7 @@ export default function StrategyDetailPage() {
   const navigate = useNavigate()
   const { data: strategy, isLoading: isLoadingStrategy } = useStrategy(id!)
   const { data: versions, isLoading: isLoadingVersions } = useStrategyVersions(id!)
+  const { data: pluginOptions = [] } = useStrategyPlugins()
   const { data: sessions } = useSessions()
   const { data: backtests } = useBacktests()
 
@@ -82,8 +84,8 @@ export default function StrategyDetailPage() {
   const pluginId = typeof latestConfig.plugin_id === 'string' ? latestConfig.plugin_id : ''
   const pluginVersion = typeof latestConfig.plugin_version === 'string' ? latestConfig.plugin_version : '-'
   const pluginConfig = asObject(latestConfig.plugin_config)
-  const pluginOption = getBuiltinPluginOption(pluginId)
-  const pluginSummaryFields = getBuiltinPluginSummaryFields(pluginId)
+  const pluginOption = getPluginOption(pluginOptions, pluginId)
+  const pluginSummaryFields = getPluginSummaryFields(pluginOptions, pluginId)
 
   const getTypeColor = (type: string): ChipProps['color'] => {
     switch (type) {
@@ -96,53 +98,47 @@ export default function StrategyDetailPage() {
 
   return (
     <Box>
-      {/* Header */}
-      <Box sx={{ display: 'flex', alignItems: 'center', mb: 3, gap: 2 }}>
+      <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mb: 1.5 }}>
         <IconButton onClick={() => navigate('/strategies')} sx={{ color: 'text.secondary' }}>
           <ArrowLeft size={20} />
         </IconButton>
-        <Box sx={{ flexGrow: 1 }}>
-          <Stack direction="row" alignItems="center" spacing={2}>
-            <Typography variant="h4">{strategy.name}</Typography>
-            <Chip 
-              label={translateStrategyType(strategy.strategy_type)} 
-              size="small" 
+      </Stack>
+
+      <LabPageHeader
+        eyebrow="STRATEGY DETAIL"
+        title={strategy.name}
+        description={strategy.strategy_key}
+        actions={(
+          <>
+            <Chip
+              label={translateStrategyType(strategy.strategy_type)}
+              size="small"
               color={getTypeColor(strategy.strategy_type)}
             />
-            <Box 
-              sx={{ 
-                display: 'flex', 
-                alignItems: 'center', 
-                gap: 1,
-                color: strategy.is_active ? 'status.success' : 'text.disabled',
-                typography: 'caption',
-                fontWeight: 600
-              }}
+            <Chip
+              label={strategy.is_active ? '활성' : '비활성'}
+              size="small"
+              color={strategy.is_active ? 'success' : 'default'}
+              variant={strategy.is_active ? 'filled' : 'outlined'}
+            />
+            <Button
+              variant="outlined"
+              startIcon={<Edit2 size={16} />}
+              onClick={() => navigate(`/strategies/${strategy.id}/edit`)}
             >
-              <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: 'currentColor' }} />
-              {strategy.is_active ? '활성' : '비활성'}
-            </Box>
-          </Stack>
-          <Typography variant="body2" color="text.tertiary" sx={{ mt: 0.5 }}>
-            {strategy.strategy_key}
-          </Typography>
-        </Box>
-        <Button 
-          variant="outlined" 
-          startIcon={<Edit2 size={16} />}
-          onClick={() => navigate(`/strategies/${strategy.id}/edit`)}
-        >
-          편집
-        </Button>
-        <Button 
-          variant="contained" 
-          color="primary" 
-          startIcon={<Play size={16} />}
-          onClick={() => navigate('/backtests')}
-        >
-          백테스트 실행
-        </Button>
-      </Box>
+              편집
+            </Button>
+            <Button
+              variant="contained"
+              color="primary"
+              startIcon={<Play size={16} />}
+              onClick={() => navigate('/backtests')}
+            >
+              백테스트 실행
+            </Button>
+          </>
+        )}
+      />
 
       <Grid container spacing={3}>
         <Grid item xs={12} md={8}>
@@ -228,7 +224,7 @@ export default function StrategyDetailPage() {
                       <Grid item xs={12} sm={6} key={field.key}>
                         <Typography variant="caption" color="text.tertiary">{field.label}</Typography>
                         <Typography variant="body1">
-                          {formatBuiltinPluginConfigValue(field, pluginConfig[field.key] ?? pluginOption?.defaultConfig[field.key])}
+                          {formatPluginConfigValue(field, pluginConfig[field.key] ?? pluginOption?.default_config[field.key])}
                         </Typography>
                       </Grid>
                     )) : (

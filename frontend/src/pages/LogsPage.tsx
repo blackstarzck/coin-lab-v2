@@ -27,6 +27,7 @@ import {
   translateLogLevel,
   translateMode,
 } from '@/shared/lib/i18n'
+import { LabPageHeader } from '@/shared/ui/LabPageHeader'
 
 const CHANNELS: Array<{ label: string; value: LogChannel }> = [
   { label: '시스템', value: 'system' },
@@ -70,10 +71,12 @@ export default function LogsPage() {
   })
 
   return (
-    <Box sx={{ p: 3, display: 'flex', flexDirection: 'column', gap: 3 }}>
-      <Typography variant="h4" sx={{ fontWeight: 600 }}>
-        로그
-      </Typography>
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <LabPageHeader
+        eyebrow="EXECUTION TRAIL"
+        title="로그"
+        description="시스템, 전략 실행, 주문, 리스크 이벤트를 채널별로 탐색합니다."
+      />
 
       <Box sx={{ borderBottom: 1, borderColor: 'border.default' }}>
         <Tabs value={tabIndex} onChange={handleTabChange} variant="scrollable" scrollButtons="auto">

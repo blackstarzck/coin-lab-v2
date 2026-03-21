@@ -18,6 +18,7 @@ export interface SessionSymbolScope {
 }
 
 export interface SessionPerformance {
+  symbol_performance?: Record<string, SymbolPerformance>;
   realized_pnl: number;
   realized_pnl_pct: number;
   unrealized_pnl: number;
@@ -25,6 +26,15 @@ export interface SessionPerformance {
   trade_count?: number;
   win_rate_pct?: number;
   max_drawdown_pct?: number;
+  initial_capital?: number;
+}
+
+export interface SymbolPerformance {
+  realized_pnl?: number;
+  realized_pnl_pct?: number;
+  realized_cost_basis?: number;
+  trade_count?: number;
+  winning_trade_count?: number;
 }
 
 export interface SessionHealth {

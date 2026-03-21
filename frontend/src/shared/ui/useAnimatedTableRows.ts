@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo, useRef } from 'react'
+import { useCallback, useLayoutEffect, useRef } from 'react'
 
 const ENTER_TRANSITION = 'transform 320ms cubic-bezier(0.16, 1, 0.3, 1), opacity 320ms ease'
 
@@ -6,7 +6,6 @@ export function useAnimatedTableRows(rowIds: string[]) {
   const rowElementsRef = useRef(new Map<string, HTMLTableRowElement>())
   const previousTopByIdRef = useRef(new Map<string, number>())
   const rafHandlesRef = useRef<number[]>([])
-  const animationKey = useMemo(() => rowIds.join('|'), [rowIds])
 
   const setRowRef = useCallback(
     (rowId: string) => (element: HTMLTableRowElement | null) => {
@@ -86,7 +85,7 @@ export function useAnimatedTableRows(rowIds: string[]) {
       }
       rafHandlesRef.current = []
     }
-  }, [animationKey])
+  }, [rowIds])
 
   return { setRowRef }
 }

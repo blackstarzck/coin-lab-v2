@@ -38,6 +38,11 @@ def list_strategies(
     return response_envelope(rows, meta)
 
 
+@router.get("/plugins")
+def list_plugins() -> dict[str, object]:
+    return response_envelope(get_container().plugin_registry.list_metadata())
+
+
 @router.get("/{strategy_id}")
 def get_strategy(strategy_id: str) -> dict[str, object]:
     return response_envelope(get_container().strategy_service.get_strategy(strategy_id))

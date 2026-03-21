@@ -66,7 +66,7 @@ export function AnimatedOdometer({
       isDisposed = true
       instanceRef.current = null
     }
-  }, [duration, format, theme])
+  }, [duration, fallback, format, normalizedValue, theme])
 
   useEffect(() => {
     if (instanceRef.current !== null) {

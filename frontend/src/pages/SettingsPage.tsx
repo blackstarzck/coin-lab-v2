@@ -13,6 +13,7 @@ import {
 
 import { useRuntimeSettings, useRuntimeStatus, useRuntimeToggle } from '@/features/system/api'
 import { translateConnectionState } from '@/shared/lib/i18n'
+import { LabPageHeader } from '@/shared/ui/LabPageHeader'
 
 function StatusRow({ label, value }: { label: string, value: string }) {
   return (
@@ -30,7 +31,7 @@ export default function SettingsPage() {
 
   if (isLoadingStatus || isLoadingSettings) {
     return (
-      <Box sx={{ p: 3, display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
         <Skeleton variant="text" width={200} height={48} />
         <Grid container spacing={3}>
           {Array.from({ length: 6 }).map((_, index) => (
@@ -44,23 +45,22 @@ export default function SettingsPage() {
   }
 
   return (
-    <Box sx={{ p: 3, display: 'flex', flexDirection: 'column', gap: 3 }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
-        <Box>
-          <Typography variant="h4" sx={{ fontWeight: 600 }}>설정</Typography>
-          <Typography variant="body2" color="text.secondary">
-            MVP에서는 런타임과 인프라 설정이 읽기 전용이며, 현재 백엔드 상태를 그대로 보여줍니다.
-          </Typography>
-        </Box>
-        <Button
-          variant={runtimeStatus?.running ? 'outlined' : 'contained'}
-          color={runtimeStatus?.running ? 'warning' : 'success'}
-          onClick={() => runtimeToggle.mutate(!(runtimeStatus?.running ?? false))}
-          disabled={runtimeToggle.isPending}
-        >
-          {runtimeToggle.isPending ? '업데이트 중...' : runtimeStatus?.running ? '런타임 일시정지' : '런타임 시작'}
-        </Button>
-      </Box>
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <LabPageHeader
+        eyebrow="CONTROL ROOM"
+        title="설정"
+        description="런타임과 인프라 상태를 읽고 실전 보호 설정을 확인합니다."
+        actions={(
+          <Button
+            variant={runtimeStatus?.running ? 'outlined' : 'contained'}
+            color={runtimeStatus?.running ? 'warning' : 'success'}
+            onClick={() => runtimeToggle.mutate(!(runtimeStatus?.running ?? false))}
+            disabled={runtimeToggle.isPending}
+          >
+            {runtimeToggle.isPending ? '업데이트 중...' : runtimeStatus?.running ? '런타임 일시정지' : '런타임 시작'}
+          </Button>
+        )}
+      />
 
       <Stack direction="row" spacing={1.5} flexWrap="wrap" useFlexGap>
         <Chip label={`런타임 ${runtimeStatus?.running ? '켜짐' : '꺼짐'}`} color={runtimeStatus?.running ? 'success' : 'default'} />

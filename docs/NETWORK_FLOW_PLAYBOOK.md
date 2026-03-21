@@ -71,11 +71,11 @@ flowchart LR
 | `/api/v1/monitoring/summary` | REST | Page query | Dashboard, Monitoring | Bootstraps monitoring summary and provides fallback snapshot |
 | `/ws/monitoring` | WebSocket | Global provider | Dashboard, Monitoring | Pushes summary updates into shared cache |
 | `/api/v1/sessions` | REST | Monitoring page | Monitoring | Builds session list and decides active session |
-| `/api/v1/sessions/{id}` | REST | Monitoring page | Monitoring | Fills selected session header and top status |
-| `/api/v1/sessions/{id}/positions` | REST | Monitoring page | Monitoring | Drives position table and symbol PnL rows |
-| `/api/v1/sessions/{id}/signals` | REST | Monitoring page | Monitoring | Drives the merged signal/order tab and selected strategy explain detail |
-| `/api/v1/sessions/{id}/orders` | REST | Monitoring page | Monitoring | Supplies execution results inside the merged signal/order tab |
-| `/api/v1/sessions/{id}/risk-events` | REST | Monitoring page | Monitoring | Drives risk tab and explains blocked rows in the merged signal/order tab |
+| `/api/v1/sessions/{id}` | REST | Monitoring page | Monitoring | Fills selected session header, top status, and realized symbol PnL summaries |
+| `/api/v1/sessions/{id}/positions` | REST | Monitoring page | Monitoring | Drives position table and open-position mark-to-market values inside symbol PnL rows |
+| `/api/v1/sessions/{id}/signals` | REST | Monitoring page | Monitoring | Drives the `Signals` tab and the selected `Strategy Explain` detail |
+| `/api/v1/sessions/{id}/orders` | REST | Monitoring page | Monitoring | Drives the `Orders` tab and supplies execution results joined into the `Signals` tab |
+| `/api/v1/sessions/{id}/risk-events` | REST | Monitoring page | Monitoring | Drives the `Risk` tab and explains blocked rows inside the `Signals` tab |
 | `/api/v1/logs/strategy-execution` | REST | Monitoring page | Monitoring | Drives event log tab |
 | `/ws/charts/{symbol}` | WebSocket | Monitoring page | Monitoring | Updates the center chart for the active symbol only |
 | `/ws/prices?symbols=...` | WebSocket | Monitoring page | Monitoring | Updates live prices, symbol PnL rows, and recent buy/sell entry-rate badges |
@@ -149,8 +149,11 @@ sequenceDiagram
 - `sessions` must load before the page can reliably choose the active session.
 - The active session must exist before detail requests can run.
 - Active symbols come from the selected session.
+- Realized symbol PnL now comes from the selected session's `performance.symbol_performance`.
+- Open-position mark-to-market still comes from `/sessions/{id}/positions` plus `/ws/prices`.
 - The active symbol must exist before the chart websocket opens.
-- The merged `신호·주문` tab needs `signals`, `orders`, and `risk-events` together to explain whether a signal filled, was blocked, or has no linked order.
+- The `Signals` tab needs `signals`, `orders`, and `risk-events` together to explain whether a signal filled, was blocked, or has no linked order.
+- The `Orders` tab can render from `/orders` alone, but still reuses the signal-to-order match result to show linked signal context when available.
 - `/ws/prices` now carries both the latest trade price and a rolling one-minute buy/sell entry-rate snapshot per symbol.
 
 ### UI Impact
@@ -162,7 +165,8 @@ This page combines:
 - live prices
 - symbol-level buy/sell entry-rate snapshots derived from recent trade flow
 - signal selection state for `Strategy Explain`
-- a merged `신호·주문` timeline that joins signals with downstream orders and risk blocks
+- a `Signals` table that joins signals with downstream orders and risk blocks
+- a separate `Orders` table for runtime order states
 
 Because of that, a bug here can look like:
 - empty chart
@@ -206,7 +210,7 @@ Signal markers on the chart do not open a new network connection.
 
 Current behavior:
 - marker rendering uses the already-fetched `/api/v1/sessions/{id}/signals` result
-- clicking a marker updates local selected-signal state only
+- clicking a marker or a `Signals` row updates local selected-signal state only
 - the right-side `Strategy Explain` tab opens for that selected signal
 
 ### Maintenance Note

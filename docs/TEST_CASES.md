@@ -206,6 +206,31 @@ This document is a mandatory reference for backend, frontend, and worker impleme
 **When** the JSON preview is opened
 **Then** the JSON must reflect the latest valid form state
 
+### TC-UI-005: dashboard profitability and session visibility
+**Given** monitoring summary contains strategy profitability, session state, and live activity data
+**When** `/` loads
+**Then** the hero KPI, leaderboard, recent trades, and strategy detail cards must expose realized/unrealized performance and current monitoring state without empty placeholders for active strategies
+
+### TC-UI-006: monitoring abnormal termination and degraded feed visibility
+**Given** a session enters `STOPPING`, `STOPPED`, `FAILED`, or degraded connection/snapshot health
+**When** `/monitoring` refreshes or receives the updated state
+**Then** the top status area, session list, and risk/event surfaces must expose the abnormal state clearly and keep stop or kill controls visible when relevant
+
+### TC-UI-007: analysis-oriented signal explain selection
+**Given** a monitoring session has recent signals and explainable strategy config
+**When** the user opens `전략 해설` or selects a signal from the chart or table context
+**Then** the detail panel must resolve a valid selected signal automatically and keep the explain view aligned with the current session data
+
+### TC-UI-008: monitoring session-detail tab IA alignment
+**Given** a monitoring session exists
+**When** `/monitoring` loads
+**Then** the `Session Detail` panel must expose exactly `이벤트 로그 / 전략 해설 / 신호 / 주문 / 리스크` tabs and keep runtime controls visible above the workspace
+
+### TC-UI-009: strategy edit JSON editor and validation naming
+**Given** a user opens strategy create or edit
+**When** the vertical section tabs render
+**Then** the final tabs must expose `Diff Preview`, `JSON Editor`, and `Validation` labels while plugin metadata form flows remain available
+
 ## Regression suites
 - `suite_smoke_minimum`
   - TC-DSL-001
@@ -213,10 +238,11 @@ This document is a mandatory reference for backend, frontend, and worker impleme
   - TC-BT-001
   - TC-API-001
   - TC-UI-001
+  - TC-UI-008
 - `suite_engine_core`
   - all Section B and Section C cases
 - `suite_release_gate`
-  - all high-risk test cases: TC-EVT-003, TC-BT-003, TC-BT-004, TC-EXE-001, TC-EXE-002, TC-UI-003
+  - all high-risk test cases: TC-EVT-003, TC-BT-003, TC-BT-004, TC-EXE-001, TC-EXE-002, TC-UI-003, TC-UI-006
 
 ## Required CI gates
 - Pull request touching DSL: run all Section A and mapped Section E tests

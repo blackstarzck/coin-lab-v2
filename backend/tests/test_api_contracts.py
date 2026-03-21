@@ -58,6 +58,26 @@ def test_tc_api_001b_strategy_detail_response_shape() -> None:
     assert data["strategy_type"] in {"dsl", "plugin", "hybrid"}
 
 
+def test_tc_api_001c_plugin_catalog_response_shape() -> None:
+    response = client.get("/api/v1/strategies/plugins")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert isinstance(body["data"], list)
+    _assert_trace_and_timestamp(body)
+
+    plugin_ids = {item["plugin_id"] for item in body["data"]}
+    assert {"breakout_v1", "smc_confluence_v1", "ob_fvg_bull_reclaim_v1"}.issubset(plugin_ids)
+
+    ob_fvg = next(item for item in body["data"] if item["plugin_id"] == "ob_fvg_bull_reclaim_v1")
+    assert ob_fvg["label"] == "OB FVG Bull Reclaim V1"
+    assert isinstance(ob_fvg["default_config"], dict)
+    assert ob_fvg["default_config"]["timeframe"] == "15m"
+    assert isinstance(ob_fvg["fields"], list)
+    assert any(field["key"] == "trend_timeframe" for field in ob_fvg["fields"])
+
+
 def test_tc_api_002_validation_error_payload_shape() -> None:
     response = client.post("/api/v1/strategies", json={})
 

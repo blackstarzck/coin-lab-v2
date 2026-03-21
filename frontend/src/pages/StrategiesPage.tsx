@@ -3,8 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import {
   Box,
   Typography,
-  Card,
-  CardContent,
   Table,
   TableBody,
   TableCell,
@@ -31,8 +29,9 @@ import { Eye, Edit2, Play, Activity } from 'lucide-react'
 import { preloadStrategyEditPage } from '@/app/routeLoaders'
 import { useStrategies } from '@/features/strategies/api'
 import { formatRelativeTime, translateStrategyType } from '@/shared/lib/i18n'
+import { LabPageHeader } from '@/shared/ui/LabPageHeader'
+import { LabSurfaceCard } from '@/shared/ui/LabSurfaceCard'
 
-const CREATE_BUTTON_SPINNER_DELAY_MS = 180
 const CREATE_BUTTON_MIN_WIDTH = 148
 
 export default function StrategiesPage() {
@@ -43,7 +42,6 @@ export default function StrategiesPage() {
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState<string>('all')
   const [activeOnly, setActiveOnly] = useState(false)
-  const [showCreateSpinner, setShowCreateSpinner] = useState(false)
 
   useEffect(() => {
     const preloadTimer = window.setTimeout(() => {
@@ -54,21 +52,6 @@ export default function StrategiesPage() {
       window.clearTimeout(preloadTimer)
     }
   }, [])
-
-  useEffect(() => {
-    if (!isCreateNavigationPending) {
-      setShowCreateSpinner(false)
-      return
-    }
-
-    const spinnerTimer = window.setTimeout(() => {
-      setShowCreateSpinner(true)
-    }, CREATE_BUTTON_SPINNER_DELAY_MS)
-
-    return () => {
-      window.clearTimeout(spinnerTimer)
-    }
-  }, [isCreateNavigationPending])
 
   const filteredStrategies = useMemo(() => {
     if (!strategies) return []
@@ -106,6 +89,8 @@ export default function StrategiesPage() {
     })
   }
 
+  const showCreateSpinner = isCreateNavigationPending
+
   const createButtonContent = (
     <Box
       component="span"
@@ -135,23 +120,27 @@ export default function StrategiesPage() {
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h4">전략</Typography>
-        <Button
-          variant="contained"
-          color="primary"
-          onClick={handleNavigateToCreatePage}
-          onPointerEnter={handlePreloadCreatePage}
-          onFocus={handlePreloadCreatePage}
-          disabled={isCreateNavigationPending}
-          sx={{ minWidth: CREATE_BUTTON_MIN_WIDTH }}
-        >
-          {createButtonContent}
-        </Button>
-      </Box>
+      <LabPageHeader
+        eyebrow="STRATEGY CATALOG"
+        title="전략"
+        description="플랫폼에 등록된 DSL, 플러그인, 하이브리드 전략을 같은 규칙으로 탐색하고 버전을 관리합니다."
+        actions={(
+          <Button
+            variant="contained"
+            color="primary"
+            onClick={handleNavigateToCreatePage}
+            onPointerEnter={handlePreloadCreatePage}
+            onFocus={handlePreloadCreatePage}
+            disabled={isCreateNavigationPending}
+            sx={{ minWidth: CREATE_BUTTON_MIN_WIDTH }}
+          >
+            {createButtonContent}
+          </Button>
+        )}
+      />
 
-      <Card sx={{ mb: 3 }}>
-        <CardContent sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
+      <LabSurfaceCard variant="low" sx={{ mb: 3 }} headerDivider={false}>
+        <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
           <TextField
             size="small"
             placeholder="이름 또는 키로 검색..."
@@ -176,11 +165,12 @@ export default function StrategiesPage() {
             control={<Switch checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)} />}
             label="활성 전략만"
           />
-        </CardContent>
-      </Card>
+        </Box>
+      </LabSurfaceCard>
 
-      <TableContainer component={Card} sx={{ borderRadius: 2 }}>
-        <Table size="small" sx={{ '& .MuiTableCell-root': { py: 1.5 } }}>
+      <LabSurfaceCard variant="container" headerDivider={false}>
+        <TableContainer>
+          <Table size="small" sx={{ '& .MuiTableCell-root': { py: 1.5 } }}>
           <TableHead>
             <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 12 } }}>
               <TableCell>전략명</TableCell>
@@ -324,8 +314,9 @@ export default function StrategiesPage() {
               ))
             )}
           </TableBody>
-        </Table>
-      </TableContainer>
+          </Table>
+        </TableContainer>
+      </LabSurfaceCard>
     </Box>
   )
 }

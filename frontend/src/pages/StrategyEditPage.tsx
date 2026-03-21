@@ -29,23 +29,27 @@ import {
   useCreateStrategy,
   useCreateStrategyVersion,
   useStrategy,
+  useStrategyPlugins,
   useStrategyVersions,
   useUpdateStrategy,
   useValidateDraft,
   useValidateVersion,
 } from '@/features/strategies/api'
 import {
-  BUILTIN_PLUGIN_OPTIONS,
-  DEFAULT_PLUGIN_ID,
   DEFAULT_PLUGIN_VERSION,
-  type BuiltinPluginFieldDefinition,
-  getBuiltinPluginOption,
+  getPluginOption,
 } from '@/features/strategies/pluginCatalog'
 import type { UniverseCatalogItem } from '@/features/universe/api'
 import { useUniverseCatalog } from '@/features/universe/api'
 import { ConditionEditor, defaultConditionNode } from '@/features/strategies/ConditionEditor'
 import { createDefaultStrategyConfig, DEFAULT_STRATEGY_NAME } from '@/features/strategies/defaultStrategyConfig'
-import type { Strategy, StrategyVersion, ValidationResult } from '@/entities/strategy/types'
+import type {
+  Strategy,
+  StrategyPluginFieldDefinition,
+  StrategyPluginMetadata,
+  StrategyVersion,
+  ValidationResult,
+} from '@/entities/strategy/types'
 import { MuiNumberField } from '@/shared/ui/MuiNumberField'
 
 type JsonObject = Record<string, unknown>
@@ -100,11 +104,12 @@ function asArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map((item) => String(item)) : []
 }
 
-function normalizePluginMetadata(config: JsonObject): JsonObject {
+function normalizePluginMetadata(config: JsonObject, pluginOptions: readonly StrategyPluginMetadata[]): JsonObject {
+  const defaultPluginId = pluginOptions[0]?.plugin_id ?? ''
   const requestedPluginId = typeof config.plugin_id === 'string' && config.plugin_id.trim()
     ? config.plugin_id.trim()
-    : DEFAULT_PLUGIN_ID
-  const pluginOption = getBuiltinPluginOption(requestedPluginId)
+    : defaultPluginId
+  const pluginOption = getPluginOption(pluginOptions, requestedPluginId)
   return {
     ...config,
     plugin_id: requestedPluginId,
@@ -112,7 +117,7 @@ function normalizePluginMetadata(config: JsonObject): JsonObject {
       ? config.plugin_version
       : (pluginOption?.version ?? DEFAULT_PLUGIN_VERSION),
     plugin_config: {
-      ...(pluginOption?.defaultConfig ?? {}),
+      ...(pluginOption?.default_config ?? {}),
       ...asObject(config.plugin_config),
     },
   }
@@ -206,7 +211,7 @@ function ensureTimeframeInMarketConfig(config: JsonObject, timeframe: string): J
   return updateNestedConfig(config, ['market', 'timeframes'], [...currentTimeframes, normalizedTimeframe])
 }
 
-function normalizeEditableConfig(config: JsonObject): JsonObject {
+function normalizeEditableConfig(config: JsonObject, pluginOptions: readonly StrategyPluginMetadata[] = []): JsonObject {
   const normalized = {
     ...config,
     universe: normalizeUniverseConfig(asObject(config.universe)),
@@ -222,14 +227,14 @@ function normalizeEditableConfig(config: JsonObject): JsonObject {
   if (String(config.type ?? 'dsl') !== 'plugin') {
     return normalized
   }
-  const pluginNormalized = normalizePluginMetadata(normalized)
+  const pluginNormalized = normalizePluginMetadata(normalized, pluginOptions)
   const pluginConfig = asObject(pluginNormalized.plugin_config)
   const pluginTimeframe = typeof pluginConfig.timeframe === 'string' ? pluginConfig.timeframe : ''
   return ensureTimeframeInMarketConfig(pluginNormalized, pluginTimeframe)
 }
 
 function readPluginConfigFieldValue(
-  field: BuiltinPluginFieldDefinition,
+  field: StrategyPluginFieldDefinition,
   pluginConfig: JsonObject,
   defaultConfig: Record<string, string | number | boolean>,
 ): string | number | boolean {
@@ -271,8 +276,15 @@ function buildDiffRows(before: unknown, after: unknown, path = ''): DiffRow[] {
   return [{ path: path || 'root', before, after }]
 }
 
-function buildDraftConfig(baseConfig: JsonObject, name: string, description: string, labels: string[], notes: string): JsonObject {
-  const normalizedBase = normalizeEditableConfig(baseConfig)
+function buildDraftConfig(
+  baseConfig: JsonObject,
+  pluginOptions: readonly StrategyPluginMetadata[],
+  name: string,
+  description: string,
+  labels: string[],
+  notes: string,
+): JsonObject {
+  const normalizedBase = normalizeEditableConfig(baseConfig, pluginOptions)
   return {
     ...normalizedBase,
     name,
@@ -339,7 +351,8 @@ function StrategyEditForm({
   const createVersionMutation = useCreateStrategyVersion()
   const validateDraftMutation = useValidateDraft()
   const validateVersionMutation = useValidateVersion()
-  const normalizedInitialConfig = normalizeEditableConfig(initialConfig)
+  const { data: pluginOptions = [], isLoading: isLoadingPluginOptions } = useStrategyPlugins()
+  const normalizedInitialConfig = normalizeEditableConfig(initialConfig, pluginOptions)
   const [symbolSearch, setSymbolSearch] = useState('')
   const deferredSymbolSearch = useDeferredValue(symbolSearch.trim())
   const { data: topTurnoverMarkets = [], isLoading: isTopTurnoverLoading } = useUniverseCatalog({ limit: 10 })
@@ -366,9 +379,10 @@ function StrategyEditForm({
   const isPluginStrategy = strategyType === 'plugin'
   const pluginId = String(configJson.plugin_id ?? '')
   const pluginVersion = String(configJson.plugin_version ?? DEFAULT_PLUGIN_VERSION)
-  const selectedPluginOption = getBuiltinPluginOption(pluginId)
+  const defaultPluginId = pluginOptions[0]?.plugin_id ?? ''
+  const selectedPluginOption = getPluginOption(pluginOptions, pluginId)
   const pluginConfig = asObject(configJson.plugin_config)
-  const pluginDefaultConfig: Record<string, string | number | boolean> = selectedPluginOption?.defaultConfig ?? {}
+  const pluginDefaultConfig: Record<string, string | number | boolean> = selectedPluginOption?.default_config ?? {}
   const pluginFieldDefinitions = selectedPluginOption?.fields ?? []
   const pluginTimeframe = typeof pluginConfig.timeframe === 'string' && pluginConfig.timeframe.trim()
     ? String(pluginConfig.timeframe)
@@ -423,6 +437,16 @@ function StrategyEditForm({
     setConfigJson((prev) => updateNestedConfig(prev, path, value))
   }
 
+  useEffect(() => {
+    if (!pluginOptions.length) {
+      return
+    }
+    setConfigJson((prev) => {
+      const next = normalizeEditableConfig(prev, pluginOptions)
+      return JSON.stringify(next) === JSON.stringify(prev) ? prev : next
+    })
+  }, [pluginOptions])
+
   const updateIntegerAtPath = (path: string[], fallback = 0) => (value: number | null) => {
     updateConfigAtPath(path, coerceIntegerValue(value, fallback))
   }
@@ -438,12 +462,13 @@ function StrategyEditForm({
         field === 'timeframe' && typeof value === 'string'
           ? ensureTimeframeInMarketConfig(nextConfig, value)
           : nextConfig,
+        pluginOptions,
       )
     })
   }
 
   const handleStrategyTypeChange = (nextType: string) => {
-    setConfigJson((prev) => normalizeEditableConfig({ ...prev, type: nextType }))
+    setConfigJson((prev) => normalizeEditableConfig({ ...prev, type: nextType }, pluginOptions))
     setValidationResult(null)
     if (nextType === 'plugin' && (tabValue === 3 || tabValue === 5)) {
       setTabValue(2)
@@ -451,7 +476,7 @@ function StrategyEditForm({
   }
 
   const handlePluginChange = (nextPluginId: string) => {
-    const nextPluginOption = getBuiltinPluginOption(nextPluginId)
+    const nextPluginOption = getPluginOption(pluginOptions, nextPluginId)
     setConfigJson((prev) => normalizeEditableConfig({
       ...prev,
       type: 'plugin',
@@ -459,8 +484,8 @@ function StrategyEditForm({
       plugin_version: nextPluginOption?.version ?? DEFAULT_PLUGIN_VERSION,
       plugin_config: nextPluginId === String(prev.plugin_id ?? '')
         ? asObject(prev.plugin_config)
-        : { ...(nextPluginOption?.defaultConfig ?? {}) },
-    }))
+        : { ...(nextPluginOption?.default_config ?? {}) },
+    }, pluginOptions))
     setValidationResult(null)
   }
 
@@ -498,8 +523,8 @@ function StrategyEditForm({
   }, [configJson])
 
   const handleValidate = async () => {
-    const result = await validateDraftMutation.mutateAsync({
-      configJson: buildDraftConfig(configJson, name, description, labels, notes),
+      const result = await validateDraftMutation.mutateAsync({
+      configJson: buildDraftConfig(configJson, pluginOptions, name, description, labels, notes),
       strict: true,
     })
     setValidationResult(result)
@@ -518,7 +543,7 @@ function StrategyEditForm({
       const normalizedStrategyType = strategyType === 'plugin' || strategyType === 'hybrid' ? strategyType : 'dsl'
       const normalizedStrategyKey = strategyKey.trim() || strategy?.strategy_key || normalizeStrategyKey(name)
       const draftConfig: JsonObject = {
-        ...buildDraftConfig(configJson, name, description, labels, notes),
+        ...buildDraftConfig(configJson, pluginOptions, name, description, labels, notes),
         id: normalizedStrategyKey,
         type: normalizedStrategyType,
       }
@@ -609,9 +634,9 @@ function StrategyEditForm({
           <Tab label="리스크" />
           <Tab label="실행" />
           <Tab label="백테스트" />
-          <Tab label={`변경 미리보기 (${diffRows.length})`} />
-          <Tab label="원본 설정 편집기" />
-          <Tab label={validationResult?.valid ? '검증 완료' : '검증'} />
+          <Tab label={`Diff Preview (${diffRows.length})`} />
+          <Tab label="JSON Editor" />
+          <Tab label="Validation" />
         </Tabs>
 
         <Box sx={{ flexGrow: 1, overflow: 'hidden' }}>
@@ -884,20 +909,26 @@ function StrategyEditForm({
                 <Alert severity="info">
                   플러그인 전략은 진입/청산 로직을 조건 편집기 대신 백엔드 플러그인 메타데이터로 저장합니다.
                 </Alert>
+                {isLoadingPluginOptions ? (
+                  <Alert severity="info">
+                    백엔드에서 플러그인 메타데이터를 불러오는 중입니다.
+                  </Alert>
+                ) : null}
                 <Grid container spacing={2}>
                   <Grid item xs={12} sm={7}>
                     <FormControl fullWidth>
                       <InputLabel>플러그인</InputLabel>
                       <Select
-                        value={pluginId}
+                        value={pluginId || defaultPluginId}
                         label="플러그인"
                         onChange={(event) => handlePluginChange(String(event.target.value))}
+                        disabled={pluginOptions.length === 0}
                       >
                         {!selectedPluginOption && pluginId ? (
                           <MenuItem value={pluginId}>{pluginId} (등록 안 됨)</MenuItem>
                         ) : null}
-                        {BUILTIN_PLUGIN_OPTIONS.map((option) => (
-                          <MenuItem key={option.value} value={option.value}>
+                        {pluginOptions.map((option) => (
+                          <MenuItem key={option.plugin_id} value={option.plugin_id}>
                             {option.label}
                           </MenuItem>
                         ))}
@@ -937,15 +968,15 @@ function StrategyEditForm({
                             <Grid item xs={12} sm={6} key={field.key}>
                               <FormControlLabel
                                 control={(
-                                  <Switch
-                                    checked={Boolean(fieldValue)}
-                                    onChange={(event) => updatePluginConfigField(field.key, event.target.checked)}
-                                  />
-                                )}
-                                label={field.label}
-                              />
-                              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
-                                {field.helperText}
+                                <Switch
+                                  checked={Boolean(fieldValue)}
+                                  onChange={(event) => updatePluginConfigField(field.key, event.target.checked)}
+                                />
+                              )}
+                              label={field.label}
+                            />
+                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
+                                {field.helper_text}
                               </Typography>
                             </Grid>
                           )
@@ -971,7 +1002,7 @@ function StrategyEditForm({
                                 </Select>
                               </FormControl>
                               <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
-                                {field.helperText}
+                                {field.helper_text}
                               </Typography>
                             </Grid>
                           )
@@ -987,7 +1018,7 @@ function StrategyEditForm({
                                   ? coerceIntegerValue(value, typeof defaultValue === 'number' ? defaultValue : 0)
                                   : coerceNumberValue(value, typeof defaultValue === 'number' ? defaultValue : 0),
                               )}
-                              helperText={field.helperText}
+                              helperText={field.helper_text}
                               fullWidth
                               step={field.step ?? (field.kind === 'integer' ? 1 : 0.01)}
                             />
@@ -998,13 +1029,13 @@ function StrategyEditForm({
                   </>
                 ) : (
                   <Alert severity="warning">
-                    현재 프런트에 등록된 전용 폼이 없는 plugin_id입니다. 원본 설정 편집기에서 plugin_config를 직접 수정하세요.
+                    현재 프런트에 등록된 전용 폼이 없는 plugin_id입니다. JSON Editor에서 plugin_config를 직접 수정하세요.
                   </Alert>
                 )}
                 <TextField
                   label="플러그인 설정 미리보기"
                   value={pluginConfigPreview}
-                  helperText="폼 입력값이 plugin_config JSON으로 저장됩니다. 필요하면 원본 설정 편집기에서 직접 미세 조정할 수 있습니다."
+                  helperText="폼 입력값이 plugin_config JSON으로 저장됩니다. 필요하면 JSON Editor에서 직접 미세 조정할 수 있습니다."
                   multiline
                   minRows={8}
                   fullWidth
@@ -1148,7 +1179,7 @@ function StrategyEditForm({
                   플러그인 전략에서는 청산 DSL을 편집하지 않습니다. 청산 판단은 플러그인 구현이나 별도 plugin_config 규칙으로 옮길 예정입니다.
                 </Alert>
                 <Typography variant="body2" color="text.secondary">
-                  현재 단계에서는 플러그인 식별자와 버전 정보를 저장하는 것까지 지원합니다. 세부 청산 규칙은 원본 설정 편집기에서 직접 관리할 수 있습니다.
+                  현재 단계에서는 플러그인 식별자와 버전 정보를 저장하는 것까지 지원합니다. 세부 청산 규칙은 JSON Editor에서 직접 관리할 수 있습니다.
                 </Typography>
               </Stack>
             ) : (
@@ -1277,7 +1308,7 @@ function StrategyEditForm({
 
           <TabPanel value={tabValue} index={9}>
             <Stack spacing={2}>
-              <Typography variant="h6">변경 미리보기</Typography>
+              <Typography variant="h6">Diff Preview</Typography>
               <Typography variant="body2" color="text.secondary">
                 {diffRows.length === 0 ? '변경된 항목이 없습니다.' : `${diffRows.length}개 필드가 변경되었습니다.`}
               </Typography>
@@ -1302,7 +1333,7 @@ function StrategyEditForm({
           </TabPanel>
 
           <TabPanel value={tabValue} index={10}>
-            {jsonError ? <Alert severity="error" sx={{ mb: 2 }}>원본 설정 형식 오류: {jsonError}</Alert> : null}
+            {jsonError ? <Alert severity="error" sx={{ mb: 2 }}>JSON Editor 형식 오류: {jsonError}</Alert> : null}
             <TextField
               multiline
               fullWidth
@@ -1314,7 +1345,7 @@ function StrategyEditForm({
                   setConfigJson(parsed)
                   setJsonError(null)
                 } catch (error) {
-                  setJsonError(error instanceof Error ? error.message : '원본 설정 형식 오류')
+                  setJsonError(error instanceof Error ? error.message : 'JSON Editor 형식 오류')
                 }
               }}
               sx={{ '& .MuiInputBase-root': { minHeight: 520, alignItems: 'flex-start' }, '& textarea': { fontFamily: 'monospace', minHeight: '520px !important' } }}
@@ -1390,4 +1421,3 @@ export default function StrategyEditPage() {
     />
   )
 }
-

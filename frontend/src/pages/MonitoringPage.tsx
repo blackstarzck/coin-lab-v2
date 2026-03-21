@@ -1,8 +1,6 @@
 import {
   Box,
   Typography,
-  Card,
-  CardContent,
   Table,
   TableBody,
   TableCell,
@@ -21,6 +19,8 @@ import {
   Select
 } from '@mui/material'
 import type { SelectChangeEvent } from '@mui/material/Select'
+import { alpha, useTheme } from '@mui/material/styles'
+import type { Theme } from '@mui/material/styles'
 import { useQuery } from '@tanstack/react-query'
 import { Activity, AlertTriangle, Info, StopCircle, RefreshCw } from 'lucide-react'
 import {
@@ -36,7 +36,8 @@ import {
 } from '@/features/sessions/api'
 import { useMonitoringSummary } from '@/features/monitoring/api'
 import type { StrategyCard } from '@/features/monitoring/api'
-import { DetailGuidePopover, EVENT_LOG_GUIDE_SECTIONS, type GuideSection } from '@/features/monitoring/EventLogHelpPopover'
+import { DetailGuidePopover } from '@/features/monitoring/EventLogHelpPopover'
+import { EVENT_LOG_GUIDE_SECTIONS, type GuideSection } from '@/features/monitoring/eventLogGuide'
 import { useStrategies } from '@/features/strategies/api'
 import { useUiStore } from '@/stores/ui-store'
 import { CandlestickChart } from '@/shared/charts/CandlestickChart'
@@ -66,6 +67,7 @@ import { StatusText, type StatusTextTone } from '@/shared/ui/StatusText'
 import { TwoLineDateTime } from '@/shared/ui/TwoLineDateTime'
 import { useAnimatedTableRows } from '@/shared/ui/useAnimatedTableRows'
 import { useIncrementalTableRows } from '@/shared/ui/useIncrementalTableRows'
+import { LabSurfaceCard } from '@/shared/ui/LabSurfaceCard'
 
 const DETAIL_REFRESH_INTERVAL_MS = 2_000
 const POSITION_REFRESH_INTERVAL_MS = 5_000
@@ -75,13 +77,17 @@ const SIGNAL_ORDER_MATCH_WINDOW_MS = 15 * 60 * 1000
 const DETAIL_TABLE_PAGE_SIZE = 15
 const GUIDE_OVERLAY_BG = 'rgba(7, 10, 18, 0.86)'
 
-type SignalOrderTimelineRow = {
+type SignalDetailRow = {
   id: string
-  kind: 'signal' | 'order-only'
-  sortAt: number
-  signal?: Signal
+  signal: Signal
   order?: Order
   riskEvent?: RiskEvent
+}
+
+type OrderDetailRow = {
+  id: string
+  order?: Order
+  signal?: Signal
 }
 
 type EntryRateLayout = 'stacked' | 'inline'
@@ -385,17 +391,19 @@ function SessionSelectMeta({
 }
 
 export default function MonitoringPage() {
+  const theme = useTheme()
   const [selectedStrategyId, setSelectedStrategyId] = useState<string | null>(null)
   const [bottomTab, setBottomTab] = useState(0)
   const [selectedSignalId, setSelectedSignalId] = useState<string | null>(null)
   const detailPanelRef = useRef<HTMLDivElement | null>(null)
 
-  const shouldLoadEventLogs = bottomTab === 0
-  const shouldLoadStrategyExplain = bottomTab === 1
-  const shouldLoadSignalOrderFlow = bottomTab === 2
-  const shouldLoadOrders = shouldLoadSignalOrderFlow
-  const shouldLoadRiskEvents = bottomTab === 3 || shouldLoadSignalOrderFlow
-  const shouldLoadSignalData = shouldLoadStrategyExplain || shouldLoadSignalOrderFlow
+  const activeBottomTab = Math.min(bottomTab, 4)
+  const shouldLoadEventLogs = activeBottomTab === 0
+  const shouldLoadStrategyExplain = activeBottomTab === 1
+  const shouldLoadSignals = activeBottomTab === 2
+  const shouldLoadOrders = activeBottomTab === 2 || activeBottomTab === 3
+  const shouldLoadRiskEvents = activeBottomTab === 2 || activeBottomTab === 4
+  const shouldLoadSignalData = shouldLoadStrategyExplain || shouldLoadSignals
 
   const { data: sessions, isLoading: isLoadingSessions } = useSessions({ refetchIntervalMs: SESSION_LIST_REFRESH_INTERVAL_MS })
   const { data: monitoringSummary } = useMonitoringSummary()
@@ -448,10 +456,14 @@ export default function MonitoringPage() {
   const killSession = useKillSession()
   const reevaluateSession = useReevaluateSession()
 
-  const availableSymbols = useMemo(
-    () => session?.symbol_scope?.active_symbols || [],
-    [session?.symbol_scope?.active_symbols],
-  )
+  const availableSymbols = useMemo(() => {
+    const scopedSymbols = session?.symbol_scope?.active_symbols ?? []
+    const positionSymbols = (positions ?? []).map((position) => position.symbol)
+    const symbolPerformance = session?.performance?.symbol_performance
+    const realizedSymbols = symbolPerformance ? Object.keys(symbolPerformance) : []
+
+    return Array.from(new Set([...scopedSymbols, ...positionSymbols, ...realizedSymbols]))
+  }, [positions, session?.performance?.symbol_performance, session?.symbol_scope?.active_symbols])
   const activeSymbol = selectedSymbol && availableSymbols.includes(selectedSymbol)
     ? selectedSymbol
     : availableSymbols[0] || null
@@ -482,7 +494,10 @@ export default function MonitoringPage() {
     }),
     [signals],
   )
-  const signalOrderRows = useMemo<SignalOrderTimelineRow[]>(() => {
+  const { signalRows, orderRows } = useMemo<{
+    signalRows: SignalDetailRow[]
+    orderRows: OrderDetailRow[]
+  }>(() => {
     const signalsAsc = [...(signals ?? [])].sort((left, right) => {
       const timeCompare = toTimestamp(left.snapshot_time) - toTimestamp(right.snapshot_time)
       if (timeCompare !== 0) {
@@ -506,7 +521,8 @@ export default function MonitoringPage() {
     })
     const usedOrderIds = new Set<string>()
     const usedRiskEventIds = new Set<string>()
-    const rows: SignalOrderTimelineRow[] = []
+    const matchedSignalByOrderId = new Map<string, Signal>()
+    const signalDetailRows: SignalDetailRow[] = []
 
     signalsAsc.forEach((signal, index) => {
       const signalTimestamp = toTimestamp(signal.snapshot_time)
@@ -522,6 +538,7 @@ export default function MonitoringPage() {
       ))
       if (matchedOrder) {
         usedOrderIds.add(matchedOrder.id)
+        matchedSignalByOrderId.set(matchedOrder.id, signal)
       }
 
       const matchedRiskEvent = matchedOrder
@@ -536,53 +553,63 @@ export default function MonitoringPage() {
         usedRiskEventIds.add(matchedRiskEvent.id)
       }
 
-      rows.push({
+      signalDetailRows.push({
         id: `signal:${signal.id}`,
-        kind: 'signal',
-        sortAt: signalTimestamp,
         signal,
         order: matchedOrder,
         riskEvent: matchedRiskEvent,
       })
     })
 
-    ordersAsc.forEach((order) => {
-      if (usedOrderIds.has(order.id)) {
-        return
-      }
-      rows.push({
-        id: `order:${order.id}`,
-        kind: 'order-only',
-        sortAt: getOrderTimestamp(order),
-        order,
+    const orderDetailRows = [...(orders ?? [])]
+      .sort((left, right) => {
+        const timeCompare = getOrderTimestamp(right) - getOrderTimestamp(left)
+        if (timeCompare !== 0) {
+          return timeCompare
+        }
+        return right.id.localeCompare(left.id)
       })
-    })
+      .map((order) => ({
+        id: `order:${order.id}`,
+        order,
+        signal: matchedSignalByOrderId.get(order.id),
+      }))
 
-    return rows.sort((left, right) => {
-      const timeCompare = right.sortAt - left.sortAt
-      if (timeCompare !== 0) {
-        return timeCompare
-      }
-      return right.id.localeCompare(left.id)
-    })
+    return {
+      signalRows: signalDetailRows.sort((left, right) => {
+        const timeCompare = toTimestamp(right.signal.snapshot_time) - toTimestamp(left.signal.snapshot_time)
+        if (timeCompare !== 0) {
+          return timeCompare
+        }
+        return right.id.localeCompare(left.id)
+      }),
+      orderRows: orderDetailRows,
+    }
   }, [orders, riskEvents, signals])
   const eventLogTable = useIncrementalTableRows({
     items: eventTimeline,
-    enabled: bottomTab === 0,
+    enabled: activeBottomTab === 0,
     pageSize: DETAIL_TABLE_PAGE_SIZE,
     resetKey: `${activeSessionId}:event-log`,
     rootRef: detailPanelRef,
   })
-  const signalOrderTable = useIncrementalTableRows({
-    items: signalOrderRows,
-    enabled: bottomTab === 2,
+  const signalTable = useIncrementalTableRows({
+    items: signalRows,
+    enabled: activeBottomTab === 2,
     pageSize: DETAIL_TABLE_PAGE_SIZE,
-    resetKey: `${activeSessionId}:signal-order`,
+    resetKey: `${activeSessionId}:signals`,
+    rootRef: detailPanelRef,
+  })
+  const orderTable = useIncrementalTableRows({
+    items: orderRows,
+    enabled: activeBottomTab === 3,
+    pageSize: DETAIL_TABLE_PAGE_SIZE,
+    resetKey: `${activeSessionId}:orders`,
     rootRef: detailPanelRef,
   })
   const riskTable = useIncrementalTableRows({
     items: riskEvents ?? [],
-    enabled: bottomTab === 3,
+    enabled: activeBottomTab === 4,
     pageSize: DETAIL_TABLE_PAGE_SIZE,
     resetKey: `${activeSessionId}:risk`,
     rootRef: detailPanelRef,
@@ -591,16 +618,21 @@ export default function MonitoringPage() {
     () => eventLogTable.visibleItems.map((log) => `${log.channel}:${log.id}`),
     [eventLogTable.visibleItems],
   )
-  const signalOrderRowIds = useMemo(
-    () => signalOrderTable.visibleItems.map((row) => row.id),
-    [signalOrderTable.visibleItems],
+  const signalRowIds = useMemo(
+    () => signalTable.visibleItems.map((row) => row.id),
+    [signalTable.visibleItems],
+  )
+  const orderRowIds = useMemo(
+    () => orderTable.visibleItems.map((row) => row.id),
+    [orderTable.visibleItems],
   )
   const riskRowIds = useMemo(
     () => riskTable.visibleItems.map((event) => event.id),
     [riskTable.visibleItems],
   )
   const { setRowRef: setEventLogRowRef } = useAnimatedTableRows(eventLogRowIds)
-  const { setRowRef: setSignalOrderRowRef } = useAnimatedTableRows(signalOrderRowIds)
+  const { setRowRef: setSignalRowRef } = useAnimatedTableRows(signalRowIds)
+  const { setRowRef: setOrderRowRef } = useAnimatedTableRows(orderRowIds)
   const { setRowRef: setRiskRowRef } = useAnimatedTableRows(riskRowIds)
 
   useEffect(() => {
@@ -621,24 +653,14 @@ export default function MonitoringPage() {
       setSelectedSession(null)
     }
   }, [activeSessionId, selectedSessionId, setSelectedSession])
-
-  useEffect(() => {
-    if (bottomTab > 3) {
-      setBottomTab(3)
-    }
-  }, [bottomTab])
-
-  useEffect(() => {
+  const resolvedSelectedSignalId = useMemo(() => {
     if (!orderedSignals.length) {
-      if (selectedSignalId !== null) {
-        setSelectedSignalId(null)
-      }
-      return
+      return null
     }
-
-    if (!selectedSignalId || !orderedSignals.some((signal) => signal.id === selectedSignalId)) {
-      setSelectedSignalId(orderedSignals[0].id)
+    if (selectedSignalId && orderedSignals.some((signal) => signal.id === selectedSignalId)) {
+      return selectedSignalId
     }
+    return orderedSignals[0].id
   }, [orderedSignals, selectedSignalId])
 
   const getActionTone = (action: string): 'success' | 'danger' => {
@@ -890,46 +912,38 @@ export default function MonitoringPage() {
     [activeStrategyConfig],
   )
 
+  const resolvedSelectedStrategyId = useMemo(() => {
+    if (activeSessionEntry?.strategyId) {
+      return activeSessionEntry.strategyId
+    }
+    if (selectedStrategyId && strategyGroups.some((group) => group.strategyId === selectedStrategyId)) {
+      return selectedStrategyId
+    }
+    return strategyGroups[0]?.strategyId ?? null
+  }, [activeSessionEntry, selectedStrategyId, strategyGroups])
+
   const selectedStrategyGroup = useMemo(
-    () => strategyGroups.find((group) => group.strategyId === selectedStrategyId) ?? null,
-    [selectedStrategyId, strategyGroups],
+    () => strategyGroups.find((group) => group.strategyId === resolvedSelectedStrategyId) ?? null,
+    [resolvedSelectedStrategyId, strategyGroups],
   )
 
   const filteredSessionEntries = useMemo(() => {
-    if (!selectedStrategyId) {
+    if (!resolvedSelectedStrategyId) {
       return sessionsWithStrategy
     }
-    return sessionsWithStrategy.filter((entry) => entry.strategyId === selectedStrategyId)
-  }, [selectedStrategyId, sessionsWithStrategy])
+    return sessionsWithStrategy.filter((entry) => entry.strategyId === resolvedSelectedStrategyId)
+  }, [resolvedSelectedStrategyId, sessionsWithStrategy])
 
   const selectedSessionOption = useMemo(
     () => filteredSessionEntries.find((entry) => entry.session.id === activeSessionId) ?? filteredSessionEntries[0] ?? null,
     [activeSessionId, filteredSessionEntries],
   )
 
-  useEffect(() => {
-    if (!strategyGroups.length) {
-      if (selectedStrategyId !== null) {
-        setSelectedStrategyId(null)
-      }
-      return
-    }
-
-    if (activeSessionEntry?.strategyId) {
-      if (selectedStrategyId !== activeSessionEntry.strategyId) {
-        setSelectedStrategyId(activeSessionEntry.strategyId)
-      }
-      return
-    }
-
-    if (!selectedStrategyId || !strategyGroups.some((group) => group.strategyId === selectedStrategyId)) {
-      setSelectedStrategyId(strategyGroups[0].strategyId)
-    }
-  }, [activeSessionEntry, selectedStrategyId, strategyGroups])
-
   const symbolPerformanceRows = useMemo(() => {
     const positionBySymbol = new Map()
     const openPositionStates = new Set(['OPENING', 'OPEN', 'CLOSING'])
+    const symbolPerformance = session?.performance?.symbol_performance ?? {}
+    const initialCapital = asNumber(session?.performance?.initial_capital) || 1_000_000
 
     positions?.forEach((position) => {
       if (!openPositionStates.has(position.position_state)) {
@@ -942,6 +956,7 @@ export default function MonitoringPage() {
       const position = positionBySymbol.get(symbol)
       const livePrice = pricesBySymbol[symbol]
       const latestPrice = livePrice?.price
+      const realizedPerformance = symbolPerformance[symbol]
       const avgEntryPrice = asNumber(position?.avg_entry_price)
       const quantity = asNumber(position?.quantity)
       const canUseLivePrice =
@@ -950,12 +965,14 @@ export default function MonitoringPage() {
         && avgEntryPrice > 0
         && quantity > 0
 
-      const pnlAmount = canUseLivePrice
+      const realizedPnlAmount = asNumber(realizedPerformance?.realized_pnl)
+      const unrealizedPnlAmount = canUseLivePrice
         ? (latestPrice - avgEntryPrice) * quantity
         : asNumber(position?.unrealized_pnl)
-      const pnlPercent = canUseLivePrice
-        ? ((latestPrice - avgEntryPrice) / avgEntryPrice) * 100
-        : asNumber(position?.unrealized_pnl_pct)
+      const pnlAmount = realizedPnlAmount + unrealizedPnlAmount
+      const pnlPercent = initialCapital > 0
+        ? (pnlAmount / initialCapital) * 100
+        : 0
 
       return {
         symbol,
@@ -964,7 +981,7 @@ export default function MonitoringPage() {
         price: livePrice ?? null,
       }
     })
-  }, [availableSymbols, positions, pricesBySymbol])
+  }, [availableSymbols, positions, pricesBySymbol, session?.performance?.initial_capital, session?.performance?.symbol_performance])
 
   const activeSymbolPrice = activeSymbol ? pricesBySymbol[activeSymbol] ?? null : null
 
@@ -1014,19 +1031,32 @@ export default function MonitoringPage() {
     setSelectedSymbol(null)
 
     const nextEntry = sessionsWithStrategy.find((entry) => entry.session.id === sessionId)
-    if (nextEntry && nextEntry.strategyId !== selectedStrategyId) {
+    if (nextEntry && nextEntry.strategyId !== resolvedSelectedStrategyId) {
       setSelectedStrategyId(nextEntry.strategyId)
     }
   }
 
   return (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', p: 2, gap: 2 }}>
-      {/* Top Global Bar */}
-      <Card sx={{ flexShrink: 0 }}>
-        <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 }, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Typography variant="h6">모니터링</Typography>
-          
-          <Stack direction="row" spacing={1}>
+    <Box sx={{ mx: 'auto', width: '100%', maxWidth: 1600, display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <LabSurfaceCard
+        dataTestId="monitoring-hero"
+        title="Live Monitoring"
+        subtitle="실행 중인 전략 세션을 심볼, 차트, 이벤트, 리스크 단위로 동시에 관찰합니다."
+        action={
+          <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 1 }}>
+            <Chip label={`세션 ${filteredSessionEntries.length}`} sx={monitoringPill(theme)} />
+            <Chip label={`심볼 ${availableSymbols.length}`} sx={monitoringPill(theme)} />
+            <Chip label={session ? translateSessionStatus(session.status) : '세션 대기'} sx={monitoringAccentPill(theme)} />
+          </Stack>
+        }
+      >
+        <Stack
+          direction={{ xs: 'column', xl: 'row' }}
+          justifyContent="space-between"
+          alignItems={{ xs: 'flex-start', xl: 'center' }}
+          spacing={2}
+        >
+          <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 1 }}>
             <Button
               variant="outlined"
               color="inherit"
@@ -1040,12 +1070,13 @@ export default function MonitoringPage() {
                   })
                 }
               }}
+              sx={monitoringActionButtonSx(theme)}
             >
               수동 재평가
             </Button>
-            <Button 
-              variant="outlined" 
-              color="inherit" 
+            <Button
+              variant="outlined"
+              color="inherit"
               startIcon={<StopCircle size={16} />}
               disabled={!session || session.status !== 'RUNNING'}
               onClick={() => {
@@ -1053,12 +1084,13 @@ export default function MonitoringPage() {
                   stopSession.mutate({ id: session.id, reason: 'manual_stop' })
                 }
               }}
+              sx={monitoringActionButtonSx(theme)}
             >
               중지
             </Button>
-            <Button 
-              variant="contained" 
-              color="error" 
+            <Button
+              variant="contained"
+              color="error"
               startIcon={<AlertTriangle size={16} />}
               disabled={!session || session.status !== 'RUNNING'}
               onClick={() => {
@@ -1066,27 +1098,39 @@ export default function MonitoringPage() {
                   killSession.mutate({ id: session.id, reason: 'operator_emergency', close_open_positions: true })
                 }
               }}
+              sx={{
+                borderRadius: 999,
+                px: 2,
+              }}
             >
               긴급 종료
             </Button>
           </Stack>
-        </CardContent>
-      </Card>
-      
-      {/* 3-Column Layout */}
-      <Box sx={{ display: 'flex', flexGrow: 1, gap: 2, minHeight: 0 }}>
-        
-        {/* Left Column - Strategy > Session > PnL */}
-        <Box sx={{ width: 400, display: 'flex', flexDirection: 'column', gap: 2, flexShrink: 0, minHeight: 0 }}>
-          <Card sx={{ minHeight: 220, maxHeight: 260, display: 'flex', flexDirection: 'column' }}>
-            <Box sx={{ px: 2, py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
-              <Typography variant="subtitle2" fontWeight={700}>
-                전략
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                최근 7일 전략 성과
-              </Typography>
-            </Box>
+
+          <Box>
+            <Typography variant="body2" color="text.secondary">
+              현재 세션
+            </Typography>
+            <Typography variant="body1" sx={{ mt: 0.45 }}>
+              {session
+                ? `${activeSessionEntry?.strategyName ?? '전략 미확인'} · ${session.id.split('-')[0]}`
+                : '선택된 세션 없음'}
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.4 }}>
+              {activeSymbol ? `${activeSymbol} · ${chartTimeframe}` : '심볼을 선택하면 차트가 활성화됩니다.'}
+            </Typography>
+          </Box>
+        </Stack>
+      </LabSurfaceCard>
+
+      <Box sx={{ display: 'flex', flexGrow: 1, gap: 2.5, minHeight: 0 }}>
+        <Box sx={{ width: 400, display: 'flex', flexDirection: 'column', gap: 2.5, flexShrink: 0, minHeight: 0 }}>
+          <LabSurfaceCard
+            title="전략"
+            subtitle="최근 7일 전략 성과"
+            contentSx={{ p: 0, '&:last-child': { pb: 0 } }}
+            bodySx={{ minHeight: 220, maxHeight: 260 }}
+          >
             <Box sx={{ flexGrow: 1, minHeight: 0 }}>
               {isLoadingStrategies || isLoadingStrategyVersions ? (
                 <Stack spacing={1} sx={{ p: 2 }}>
@@ -1119,7 +1163,7 @@ export default function MonitoringPage() {
                           onClick={() => handleStrategySelect(group.strategyId)}
                           sx={{
                             cursor: 'pointer',
-                            bgcolor: selectedStrategyId === group.strategyId ? 'rgba(34, 231, 107, 0.05)' : 'transparent',
+                            bgcolor: resolvedSelectedStrategyId === group.strategyId ? alpha(theme.palette.primary.main, 0.08) : 'transparent',
                           }}
                         >
                           <TableCell sx={{ minWidth: 0 }}>
@@ -1155,17 +1199,12 @@ export default function MonitoringPage() {
                 </TableContainer>
               )}
             </Box>
-          </Card>
+          </LabSurfaceCard>
 
-          <Card sx={{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-            <Box sx={{ px: 2, py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
-              <Typography variant="subtitle2" fontWeight={700}>
-                세션
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                {selectedStrategyGroup ? `${selectedStrategyGroup.strategyName}의 세션` : '전략을 먼저 선택하세요'}
-              </Typography>
-            </Box>
+          <LabSurfaceCard
+            title="세션"
+            subtitle={selectedStrategyGroup ? `${selectedStrategyGroup.strategyName}의 세션` : '전략을 먼저 선택하세요'}
+          >
             <Box>
               {isLoadingSessions ? (
                 <Stack spacing={1} sx={{ p: 2 }}>
@@ -1273,63 +1312,59 @@ export default function MonitoringPage() {
                 </Stack>
               )}
             </Box>
-          </Card>
+          </LabSurfaceCard>
 
-          <Card sx={{ minHeight: 220, maxHeight: 280, display: 'flex', flexDirection: 'column' }}>
-            <Box sx={{ px: 2, py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
-              <Stack direction="row" spacing={0.75} alignItems="center">
-                <Typography variant="subtitle2" fontWeight={700}>
-                  수익 현황
-                </Typography>
-                <Tooltip
-                  title="초기 자금 100만원"
-                  placement="top"
-                  arrow
-                  slotProps={{
-                    tooltip: {
-                      sx: {
-                        color: '#e7edf7',
-                        bgcolor: GUIDE_OVERLAY_BG,
-                        backgroundImage: 'none',
-                        border: '1px solid rgba(255, 255, 255, 0.08)',
-                        boxShadow: '0 24px 48px rgba(0, 0, 0, 0.42)',
-                        backdropFilter: 'blur(18px)',
-                      },
+          <LabSurfaceCard
+            title="수익 현황"
+            subtitle={activeSessionEntry ? `${activeSessionEntry.strategyName} · ${activeSessionEntry.session.id.split('-')[0]}` : '선택된 세션 없음'}
+            action={(
+              <Tooltip
+                title="초기 자금 100만원"
+                placement="top"
+                arrow
+                slotProps={{
+                  tooltip: {
+                    sx: {
+                      color: '#e7edf7',
+                      bgcolor: GUIDE_OVERLAY_BG,
+                      backgroundImage: 'none',
+                      border: '1px solid rgba(255, 255, 255, 0.08)',
+                      boxShadow: '0 24px 48px rgba(0, 0, 0, 0.42)',
+                      backdropFilter: 'blur(18px)',
                     },
-                    arrow: {
-                      sx: {
-                        color: GUIDE_OVERLAY_BG,
-                      },
+                  },
+                  arrow: {
+                    sx: {
+                      color: GUIDE_OVERLAY_BG,
                     },
+                  },
+                }}
+              >
+                <Box
+                  component="span"
+                  aria-label="초기 자금 정보"
+                  sx={{
+                    width: 20,
+                    height: 20,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderRadius: '50%',
+                    border: `1px solid ${alpha(theme.palette.border.default, 0.9)}`,
+                    color: 'text.secondary',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    lineHeight: 1,
+                    cursor: 'help',
                   }}
                 >
-                  <Box
-                    component="span"
-                    aria-label="초기 자금 정보"
-                    sx={{
-                      width: 18,
-                      height: 18,
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      borderRadius: '50%',
-                      border: 1,
-                      borderColor: 'divider',
-                      color: 'text.secondary',
-                      fontSize: 11,
-                      fontWeight: 700,
-                      lineHeight: 1,
-                      cursor: 'help',
-                    }}
-                  >
-                    i
-                  </Box>
-                </Tooltip>
-              </Stack>
-              <Typography variant="caption" color="text.secondary">
-                {activeSessionEntry ? `${activeSessionEntry.strategyName} · ${activeSessionEntry.session.id.split('-')[0]}` : '선택된 세션 없음'}
-              </Typography>
-            </Box>
+                  i
+                </Box>
+              </Tooltip>
+            )}
+            contentSx={{ p: 0, '&:last-child': { pb: 0 } }}
+            bodySx={{ minHeight: 220, maxHeight: 280 }}
+          >
             <Box sx={{ flexGrow: 1, minHeight: 0 }}>
               <TableContainer sx={{ maxHeight: '100%' }}>
                 <Table size="small" stickyHeader sx={{ '& .MuiTableCell-root': { py: 1, px: 1.5 } }}>
@@ -1362,7 +1397,7 @@ export default function MonitoringPage() {
                             onClick={() => setSelectedSymbol(row.symbol)}
                             sx={{
                               cursor: 'pointer',
-                              bgcolor: activeSymbol === row.symbol ? 'rgba(34, 231, 107, 0.05)' : 'transparent',
+                              bgcolor: activeSymbol === row.symbol ? alpha(theme.palette.primary.main, 0.08) : 'transparent',
                             }}
                           >
                             <TableCell>
@@ -1398,21 +1433,27 @@ export default function MonitoringPage() {
                 </Table>
               </TableContainer>
             </Box>
-          </Card>
+          </LabSurfaceCard>
         </Box>
 
-        {/* Center Panel - Chart */}
-        <Card
+        <LabSurfaceCard
+          title="Chart Workspace"
+          subtitle={activeSessionEntry ? `${activeSessionEntry.strategyName} · ${session?.id.split('-')[0] ?? ''}` : '세션을 선택하면 차트가 활성화됩니다.'}
+          dataTestId="monitoring-chart-panel"
+          contentSx={{ p: 0, '&:last-child': { pb: 0 }, height: '100%' }}
+          bodySx={{
+            flexGrow: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            minWidth: 0,
+            minHeight: 0,
+          }}
           sx={{
             flexGrow: 1,
             display: 'flex',
             flexDirection: 'column',
             minWidth: 0,
             minHeight: 0,
-            bgcolor: '#0f172a',
-            border: '1px solid rgba(255, 255, 255, 0.08)',
-            boxShadow: '0 18px 36px rgba(2, 6, 23, 0.38)',
-            overflow: 'hidden',
           }}
         >
           <Box
@@ -1423,7 +1464,7 @@ export default function MonitoringPage() {
               display: 'flex',
               flexDirection: 'column',
               gap: 1.25,
-              bgcolor: '#111827',
+              bgcolor: alpha(theme.palette.common.white, 0.02),
             }}
           >
             <Stack direction="row" justifyContent="space-between" alignItems="flex-start" flexWrap="wrap" gap={1.5}>
@@ -1566,37 +1607,59 @@ export default function MonitoringPage() {
               </Box>
             )}
           </Box>
-        </Card>
+        </LabSurfaceCard>
 
-        {/* Right Panel - Detail Tabs */}
-        <Card sx={{ width: 440, display: 'flex', flexDirection: 'column', flexShrink: 0, minHeight: 0 }}>
-          <Box sx={{ px: 2, py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
-            <Typography variant="subtitle2" fontWeight={700}>
-              세션 상세
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              {session
-                ? `${activeSessionEntry?.strategyName ?? selectedStrategyGroup?.strategyName ?? '선택된 전략 없음'} · ${session.id.split('-')[0]}`
-                : '선택된 세션 없음'}
-            </Typography>
-          </Box>
+        <LabSurfaceCard
+          title="세션 상세"
+          subtitle={
+            session
+              ? `${activeSessionEntry?.strategyName ?? selectedStrategyGroup?.strategyName ?? '선택된 전략 없음'} · ${session.id.split('-')[0]}`
+              : '선택된 세션 없음'
+          }
+          dataTestId="monitoring-detail-panel"
+          sx={{ width: 440, flexShrink: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}
+          contentSx={{ p: 0, '&:last-child': { pb: 0 }, height: '100%' }}
+          bodySx={{
+            display: 'flex',
+            flexDirection: 'column',
+            minHeight: 0,
+            flex: 1,
+          }}
+        >
           <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
             <Tabs
-              value={bottomTab}
-              onChange={(_, v) => setBottomTab(v)}
+              value={activeBottomTab}
+              onChange={(_, v) => setBottomTab(Math.min(v, 4))}
               variant="scrollable"
               scrollButtons="auto"
               allowScrollButtonsMobile
-              sx={{ minHeight: 40 }}
+              sx={{
+                minHeight: 44,
+                px: 1,
+                '& .MuiTab-root': {
+                  minHeight: 44,
+                  py: 1,
+                  color: 'text.secondary',
+                },
+                '& .Mui-selected': {
+                  color: 'text.primary',
+                },
+                '& .MuiTabs-indicator': {
+                  height: 3,
+                  borderRadius: 999,
+                  backgroundColor: 'primary.main',
+                },
+              }}
             >
-              <Tab label="이벤트 로그" sx={{ minHeight: 40, py: 1 }} />
-              <Tab label="전략 해설" sx={{ minHeight: 40, py: 1 }} />
-              <Tab label="신호·주문" sx={{ minHeight: 40, py: 1 }} />
-              <Tab label="리스크" sx={{ minHeight: 40, py: 1 }} />
+              <Tab label="이벤트 로그" />
+              <Tab label="전략 해설" />
+              <Tab label="신호" />
+              <Tab label="주문" />
+              <Tab label="리스크" />
             </Tabs>
           </Box>
           <Box ref={detailPanelRef} sx={{ flexGrow: 1, overflowY: 'auto' }}>
-            {bottomTab === 0 ? (
+            {activeBottomTab === 0 ? (
               <Box>
                 <DetailGuidePopover
                   summary="채널, 레벨, 이벤트 코드를 함께 보면 로그 의미를 빠르게 파악할 수 있습니다."
@@ -1649,10 +1712,10 @@ export default function MonitoringPage() {
               </Box>
             ) : null}
 
-            {bottomTab === 1 ? (
+            {activeBottomTab === 1 ? (
               <StrategyExplainPanel
                 signals={orderedSignals}
-                selectedSignalId={selectedSignalId}
+                selectedSignalId={resolvedSelectedSignalId}
                 onSelectSignal={setSelectedSignalId}
                 strategyConfig={activeStrategyConfig}
                 scrollRootRef={detailPanelRef}
@@ -1660,10 +1723,10 @@ export default function MonitoringPage() {
               />
             ) : null}
 
-            {bottomTab === 2 ? (
+            {activeBottomTab === 2 ? (
               <Box>
                 <DetailGuidePopover
-                  summary="신호 컬럼과 실행 결과 컬럼에 들어갈 수 있는 값들을 눌러서 확인할 수 있습니다."
+                  summary="신호 행을 클릭하면 같은 선택 상태로 전략 해설 탭이 열리고, 실행 결과 컬럼에서 주문 연결 여부와 차단 원인을 함께 볼 수 있습니다."
                   sections={SIGNAL_ORDER_GUIDE_SECTIONS}
                   footnote="차단 계열 값은 행의 i 아이콘 툴팁에서 상세 코드나 메시지를 볼 수 있습니다."
                 />
@@ -1678,46 +1741,10 @@ export default function MonitoringPage() {
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {!signalOrderRows.length ? (
-                        <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><Typography color="text.secondary">신호와 주문이 없습니다</Typography></TableCell></TableRow>
+                      {!signalRows.length ? (
+                        <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><Typography color="text.secondary">신호가 없습니다</Typography></TableCell></TableRow>
                       ) : (
-                        signalOrderTable.visibleItems.map((row) => {
-                          if (row.kind === 'order-only' && row.order) {
-                            const orderTime = getOrderEventTime(row.order)
-                            return (
-                              <TableRow
-                                key={row.id}
-                                ref={setSignalOrderRowRef(row.id)}
-                                sx={{ '& td': { backgroundColor: 'transparent' } }}
-                              >
-                                <TableCell>
-                                  <TwoLineDateTime value={orderTime} />
-                                </TableCell>
-                                <TableCell><Typography variant="caption" fontWeight={600}>{row.order.symbol}</Typography></TableCell>
-                                <TableCell>
-                                  <Stack spacing={0.25}>
-                                    <StatusText tone="info">주문 단독</StatusText>
-                                    <Typography variant="caption" color="text.secondary">
-                                      {translateOrderRole(row.order.order_role)}
-                                    </Typography>
-                                  </Stack>
-                                </TableCell>
-                                <TableCell>
-                                  <Stack spacing={0.25}>
-                                    <StatusText tone={getOrderStateTone(row.order.order_state)}>
-                                      {translateOrderState(row.order.order_state)}
-                                    </StatusText>
-                                    {orderTime ? <Typography variant="caption" color="text.secondary">{formatTime(orderTime)}</Typography> : null}
-                                  </Stack>
-                                </TableCell>
-                              </TableRow>
-                            )
-                          }
-
-                          if (!row.signal) {
-                            return null
-                          }
-
+                        signalTable.visibleItems.map((row) => {
                           const signal = row.signal
                           const explainRiskBlocks = Array.isArray(signal.explain_payload?.risk_blocks)
                             ? signal.explain_payload.risk_blocks
@@ -1727,8 +1754,16 @@ export default function MonitoringPage() {
                           return (
                             <TableRow
                               key={row.id}
-                              ref={setSignalOrderRowRef(row.id)}
-                              sx={{ '& td': { backgroundColor: 'transparent' } }}
+                              ref={setSignalRowRef(row.id)}
+                              hover
+                              onClick={() => {
+                                setSelectedSignalId(signal.id)
+                                setBottomTab(1)
+                              }}
+                              sx={{
+                                cursor: 'pointer',
+                                '& td': { backgroundColor: 'transparent' },
+                              }}
                             >
                               <TableCell><TwoLineDateTime value={signal.snapshot_time} /></TableCell>
                               <TableCell><Typography variant="caption" fontWeight={600}>{signal.symbol}</Typography></TableCell>
@@ -1805,14 +1840,86 @@ export default function MonitoringPage() {
                 </TableContainer>
                 <IncrementalTableLoadMore
                   batchSize={DETAIL_TABLE_PAGE_SIZE}
-                  visibleCount={signalOrderTable.visibleCount}
-                  totalCount={signalOrderTable.totalCount}
-                  sentinelRef={signalOrderTable.sentinelRef}
+                  visibleCount={signalTable.visibleCount}
+                  totalCount={signalTable.totalCount}
+                  sentinelRef={signalTable.sentinelRef}
                 />
               </Box>
             ) : null}
 
-            {bottomTab === 3 ? (
+            {activeBottomTab === 3 ? (
+              <Box>
+                <TableContainer>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow sx={{ '& .MuiTableCell-head': { color: 'text.tertiary', fontSize: 11 } }}>
+                        <TableCell>시간</TableCell>
+                        <TableCell>심볼</TableCell>
+                        <TableCell>주문</TableCell>
+                        <TableCell>상태</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {!orderRows.length ? (
+                        <TableRow><TableCell colSpan={4} align="center" sx={{ py: 4 }}><Typography color="text.secondary">주문이 없습니다</Typography></TableCell></TableRow>
+                      ) : (
+                        orderTable.visibleItems.map((row) => {
+                          if (!row.order) {
+                            return null
+                          }
+                          const orderTime = getOrderEventTime(row.order)
+                          return (
+                            <TableRow
+                              key={row.id}
+                              ref={setOrderRowRef(row.id)}
+                              sx={{ '& td': { backgroundColor: 'transparent' } }}
+                            >
+                              <TableCell>
+                                <TwoLineDateTime value={orderTime} />
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="caption" fontWeight={600}>
+                                  {row.order.symbol}
+                                </Typography>
+                              </TableCell>
+                              <TableCell>
+                                <Stack spacing={0.25}>
+                                  <Typography variant="caption" fontWeight={600}>
+                                    {translateOrderRole(row.order.order_role)}
+                                  </Typography>
+                                  <Typography variant="caption" color="text.secondary">
+                                    {row.order.order_type}
+                                    {row.signal ? ` · ${translateSignalAction(row.signal.action)} 신호` : ' · 연결 신호 없음'}
+                                  </Typography>
+                                </Stack>
+                              </TableCell>
+                              <TableCell>
+                                <Stack spacing={0.25}>
+                                  <StatusText tone={getOrderStateTone(row.order.order_state)}>
+                                    {translateOrderState(row.order.order_state)}
+                                  </StatusText>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                                    {formatPriceValue(row.order.executed_price ?? row.order.requested_price)}
+                                  </Typography>
+                                </Stack>
+                              </TableCell>
+                            </TableRow>
+                          )
+                        })
+                      )}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+                <IncrementalTableLoadMore
+                  batchSize={DETAIL_TABLE_PAGE_SIZE}
+                  visibleCount={orderTable.visibleCount}
+                  totalCount={orderTable.totalCount}
+                  sentinelRef={orderTable.sentinelRef}
+                />
+              </Box>
+            ) : null}
+
+            {activeBottomTab === 4 ? (
               <Box>
                 <TableContainer>
                   <Table size="small">
@@ -1865,9 +1972,41 @@ export default function MonitoringPage() {
               </Box>
             ) : null}
           </Box>
-        </Card>
+        </LabSurfaceCard>
       </Box>
 
     </Box>
   )
+}
+
+function monitoringPill(theme: Theme) {
+  return {
+    borderRadius: 999,
+    color: theme.palette.text.secondary,
+    backgroundColor: alpha(theme.palette.common.white, 0.04),
+    border: `1px solid ${alpha(theme.palette.border.default, 0.85)}`,
+  }
+}
+
+function monitoringAccentPill(theme: Theme) {
+  return {
+    borderRadius: 999,
+    color: theme.palette.primary.main,
+    backgroundColor: alpha(theme.palette.primary.main, 0.12),
+    border: `1px solid ${alpha(theme.palette.primary.main, 0.3)}`,
+  }
+}
+
+function monitoringActionButtonSx(theme: Theme) {
+  return {
+    borderRadius: 999,
+    px: 2,
+    color: theme.palette.text.primary,
+    borderColor: alpha(theme.palette.border.default, 0.9),
+    backgroundColor: alpha(theme.palette.common.white, 0.02),
+    '&:hover': {
+      borderColor: alpha(theme.palette.primary.main, 0.3),
+      backgroundColor: alpha(theme.palette.primary.main, 0.06),
+    },
+  }
 }

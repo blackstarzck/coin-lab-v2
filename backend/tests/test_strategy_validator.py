@@ -387,6 +387,34 @@ def test_valid_smc_confluence_plugin_type() -> None:
     assert _issues(result, "errors") == []
 
 
+def test_valid_ob_fvg_bull_reclaim_plugin_type() -> None:
+    config = _base_config()
+    config["type"] = "plugin"
+    config["plugin_id"] = "ob_fvg_bull_reclaim_v1"
+    config["plugin_version"] = "1.0.0"
+    config["plugin_config"] = {
+        "timeframe": "15m",
+        "trend_timeframe": "1h",
+        "swing_width": 3,
+        "atr_length": 14,
+        "atr_mult": 1.8,
+        "body_ratio_threshold": 0.45,
+        "ob_lookback": 8,
+        "poi_expiry_bars": 24,
+        "sl_buffer_pct": 0.001,
+        "rr_target": 1.8,
+        "time_exit_bars": 20,
+        "require_prev_close": False,
+    }
+    config["entry"] = {}
+    config["exit"] = {"time_stop_bars": 20}
+
+    result = StrategyValidator().validate(config, strict=False)
+
+    assert result["valid"] is True
+    assert _issues(result, "errors") == []
+
+
 def test_valid_hybrid_type_with_registered_composer() -> None:
     config = _base_config()
     config["type"] = "hybrid"
@@ -403,6 +431,34 @@ def test_valid_hybrid_type_with_registered_composer() -> None:
     config["execution_modules"] = {
         "entry_policy": {"policy_id": "signal_price"},
         "sizing_policy": {"policy_id": "default_v1"},
+    }
+
+    result = StrategyValidator().validate(config, strict=False)
+
+    assert result["valid"] is True
+    assert _issues(result, "errors") == []
+
+
+def test_valid_hybrid_type_with_ob_fvg_bull_reclaim_composer() -> None:
+    config = _base_config()
+    config["type"] = "hybrid"
+    config["entry"] = {}
+    config["hybrid"] = {
+        "composer_id": "ob_fvg_bull_reclaim_v1",
+        "composer_config": {
+            "timeframe": "15m",
+            "trend_timeframe": "1h",
+            "swing_width": 3,
+            "atr_length": 14,
+            "atr_mult": 1.8,
+            "body_ratio_threshold": 0.45,
+            "ob_lookback": 8,
+            "poi_expiry_bars": 24,
+            "sl_buffer_pct": 0.001,
+            "rr_target": 1.8,
+            "time_exit_bars": 20,
+            "require_prev_close": False,
+        },
     }
 
     result = StrategyValidator().validate(config, strict=False)

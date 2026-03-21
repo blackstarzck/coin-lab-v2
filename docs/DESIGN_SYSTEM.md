@@ -769,7 +769,7 @@ Text/Micro
   - 최근 신호 피드는 카드 안의 dense table/list 패턴으로 처리
 
 ## 17-2. Monitoring
-- 기본 구조: 좌측 세션 패널 + 중앙 chart panel + 우측 signal/position/order panel + 하단 detail tabs
+- 기본 구조: 좌측 세션 패널 + 중앙 chart panel + 우측 `Session Detail` 탭 패널
 - 권장 컴포넌트: `SidebarNav`, `ChartCard`, `SegmentedControl`, `StatusChip`, `DataTable`
 - 스타일 원칙:
   - 중앙 차트가 시각적 주인공이며 가장 큰 면적을 차지해야 한다

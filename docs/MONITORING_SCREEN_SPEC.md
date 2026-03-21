@@ -113,13 +113,14 @@
 ### 기본 3열
 1. 좌측: 전략/세션/후보군 패널
 2. 중앙: 차트 패널
-3. 우측: 신호/포지션/주문/리스크 패널
+3. 우측: `Session Detail` 탭 패널
 
-### 하단 고정 탭
+### 우측 Session Detail 탭
 - Event Log
 - Strategy Explain
-- Order Timeline
-- Risk Events
+- Signals
+- Orders
+- Risk
 
 ### 반응형 규칙
 - 1600px 이상: 3열 고정
@@ -127,10 +128,13 @@
 - 1199px 이하: 우측 패널 drawer 전환
 
 ### 패널 스타일 규칙
-- 좌측/우측/하단 패널은 `Base Card` 계열 surface를 사용한다.
+- 좌측/우측 패널은 `Base Card` 계열 surface를 사용한다.
 - 현재 선택 세션, 현재 선택 심볼, 주요 CTA만 accent 처리한다.
 - LIVE 배너와 kill switch는 semantic danger를 사용하고 브랜드 그린과 혼용하지 않는다.
-- 차트 위 토글과 하단 탭은 compact segmented control 패턴을 사용한다.
+- 차트 위 토글과 우측 상세 탭은 compact segmented control 패턴을 사용한다.
+- 글로벌 셸과 상단 헤더는 Dashboard와 동일한 실험실 프레임을 사용한다.
+- 차트 패널, 좌측 리스트 패널, 우측 상세 패널은 동일한 surface radius/border/shadow 규칙을 사용한다.
+- 밝은 참조 화면의 정보 구조를 차용하더라도 색상과 표면 톤은 `DESIGN_SYSTEM.md` 기준 다크 시스템을 유지한다.
 
 ---
 
@@ -223,94 +227,28 @@
 
 ## 8.3 차트 interaction
 - crosshair hover 시 우측 패널 값 동기화
-- marker 클릭 시 해당 signal을 selected signal로 설정하고 하단 `Strategy Explain` 탭으로 이동
-- order line 클릭 시 하단 `Order Timeline` 탭 이동
+- marker 클릭 시 해당 signal을 selected signal로 설정하고 우측 `Strategy Explain` 탭으로 이동
+- `Signals` 행 클릭도 같은 selected-signal 상태를 갱신하고 우측 `Strategy Explain` 탭으로 이동
 
 ---
 
 ## 9. 우측 패널
 
-## 9.1 Recent Signals 카드
-컬럼:
-- time
-- strategy
-- symbol
-- action
-- signal price
-- confidence
-- blocked 여부
-- reason codes 요약
+구성:
+- `Session Detail` 카드 1개
+- 상단 segmented tabs
+- 탭별 테이블 또는 explain 패널
 
-동작:
-- 행 클릭 시 차트 이동
-- blocked signal은 amber row highlight
-
-시각 규칙:
-- action은 semantic chip 또는 icon과 함께 표시한다.
-- blocked signal은 `warning` semantic으로 표시하되, 선택 row 강조와 혼동되지 않게 한다.
-
-## 9.2 Open Positions 카드
-컬럼:
-- strategy
-- symbol
-- qty
-- avg entry
-- current price
-- stop loss
-- take profit
-- realized pnl
-- unrealized pnl
-- unrealized pnl %
-- status
-
-정렬 기본값:
-- unrealized pnl asc
-
-### 강조 규칙
-- 손실 포지션은 색상 강조
-- stop loss 근접 임계치 도달 시 warning icon
-- trailing stop 활성 중이면 special chip
-- 수익/손실 숫자는 tabular numeric을 사용한다
-
-## 9.3 Orders 카드
-컬럼:
-- submitted time
-- strategy
-- symbol
-- role
-- type
-- state
-- requested price
-- executed price
-- qty
-- retry count
-
-### 상태 아이콘
-- OPEN: amber
-- PARTIALLY_FILLED: blue
-- FILLED: green
-- REJECTED/FAILED: red
-
-시각 규칙:
-- 주문 상태는 text만 두지 말고 chip/icon 조합으로 보여준다.
-
-## 9.4 Risk Panel
-항목:
-- daily loss limit usage
-- max drawdown usage
-- duplicate block count
-- recent risk events
-
-긴급 상황:
-- LIVE에서 kill switch 발동 시 패널 맨 위 pinned alert
-
-시각 규칙:
-- risk usage progress는 neutral track + semantic fill 조합으로 표시한다.
-- pinned alert는 우측 패널 최상단에 고정하고 scroll로 사라지지 않게 한다.
+핵심 규칙:
+- `Signals` 탭은 실행 결과를 함께 요약하지만, `Orders` 탭과 역할을 합치지 않는다.
+- `Strategy Explain`은 항상 selected signal 1개를 기준으로 렌더한다.
+- `Signals` 탭과 차트 marker는 같은 selected-signal 상태를 공유한다.
+- `Orders`와 `Risk` 탭은 클릭 affordance 없이 dense runtime inspection table로 유지한다.
+- 신규 행 애니메이션은 `Event Log`, `Signals`, `Orders`, `Risk`에 동일하게 적용한다.
 
 ---
 
-## 10. 하단 탭
+## 10. Session Detail 탭
 
 ## 10.1 Event Log
 필터:
@@ -322,7 +260,7 @@
 컬럼:
 - time
 - level
-- source
+- channel
 - message
 
 ## 10.2 Strategy Explain
@@ -335,23 +273,35 @@
 - blocked reason
 - raw explain json
 
-## 10.3 Order Timeline
-선택된 position/order 기준:
-- created
-- submitted
-- partial fill
-- cancel
-- fallback
-- final fill
+## 10.3 Signals
+컬럼:
+- time
+- symbol
+- action
+- execution result
 
-## 10.4 Risk Events
+동작:
+- 행 클릭 시 selected signal을 갱신하고 `Strategy Explain` 탭으로 이동
+- execution result에는 주문 연결 상태, 리스크 차단, explain payload 차단 코드를 함께 표시한다
+
+## 10.4 Orders
+컬럼:
+- time
+- symbol
+- role
+- linked signal
+- order state
+
+표시 규칙:
+- 연결된 signal이 있으면 `ENTER` 또는 `EXIT` 맥락을 함께 보여준다
+- 연결된 signal이 없어도 주문 행은 유지한다
+
+## 10.5 Risk
 컬럼:
 - time
 - severity
 - code
-- symbol
-- strategy_version_id
-- payload preview
+- message
 
 ---
 

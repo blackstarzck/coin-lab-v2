@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '@/shared/api/client'
-import type { Strategy, StrategyVersion, ValidationResult } from '@/entities/strategy/types'
+import type { Strategy, StrategyPluginMetadata, StrategyVersion, ValidationResult } from '@/entities/strategy/types'
 import type { ApiResponse } from '@/shared/types/api'
 
 export const strategyKeys = {
@@ -10,6 +10,7 @@ export const strategyKeys = {
   details: () => [...strategyKeys.all, 'detail'] as const,
   detail: (id: string) => [...strategyKeys.details(), id] as const,
   versions: (id: string) => [...strategyKeys.detail(id), 'versions'] as const,
+  plugins: () => [...strategyKeys.all, 'plugins'] as const,
 }
 
 export function useStrategies() {
@@ -30,6 +31,16 @@ export function useStrategy(id: string) {
       return data.data
     },
     enabled: !!id,
+  })
+}
+
+export function useStrategyPlugins() {
+  return useQuery({
+    queryKey: strategyKeys.plugins(),
+    queryFn: async () => {
+      const data = await apiClient.get<unknown, ApiResponse<StrategyPluginMetadata[]>>('/strategies/plugins')
+      return data.data
+    },
   })
 }
 

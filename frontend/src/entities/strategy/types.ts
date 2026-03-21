@@ -27,6 +27,34 @@ export interface StrategyVersion {
   created_at: string;
 }
 
+export type StrategyPluginFieldKind = 'select' | 'integer' | 'number' | 'boolean';
+export type StrategyPluginFieldDisplay = 'raw' | 'percent' | 'boolean';
+
+export interface StrategyPluginFieldOption {
+  label: string;
+  value: string;
+}
+
+export interface StrategyPluginFieldDefinition {
+  key: string;
+  label: string;
+  kind: StrategyPluginFieldKind;
+  helper_text: string;
+  step?: number | null;
+  display?: StrategyPluginFieldDisplay | null;
+  options: StrategyPluginFieldOption[];
+  summary: boolean;
+}
+
+export interface StrategyPluginMetadata {
+  plugin_id: string;
+  label: string;
+  version: string;
+  description: string;
+  default_config: Record<string, string | number | boolean>;
+  fields: StrategyPluginFieldDefinition[];
+}
+
 export interface ValidationIssue {
   code: string;
   message: string;

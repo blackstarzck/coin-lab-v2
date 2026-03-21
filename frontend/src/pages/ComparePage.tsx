@@ -1,8 +1,6 @@
 import { useState } from 'react'
 import {
   Box,
-  Card,
-  CardContent,
   Checkbox,
   FormControlLabel,
   FormGroup,
@@ -18,6 +16,9 @@ import { AlertCircle } from 'lucide-react'
 
 import { useBacktests } from '@/features/backtests/api'
 import { translateBacktestStatus } from '@/shared/lib/i18n'
+import { LabEmptyState } from '@/shared/ui/LabEmptyState'
+import { LabPageHeader } from '@/shared/ui/LabPageHeader'
+import { LabSurfaceCard } from '@/shared/ui/LabSurfaceCard'
 
 export default function ComparePage() {
   const { data: backtests, isLoading } = useBacktests()
@@ -36,11 +37,14 @@ export default function ComparePage() {
   const selectedRuns = (backtests ?? []).filter((run) => selectedRunIds.includes(run.id))
 
   return (
-    <Box sx={{ p: 3, display: 'flex', flexDirection: 'column', gap: 3 }}>
-      <Typography variant="h4" sx={{ fontWeight: 600 }}>백테스트 비교</Typography>
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <LabPageHeader
+        eyebrow="COMPARISON BOARD"
+        title="백테스트 비교"
+        description="선택한 백테스트 실행을 같은 지표 축에서 비교해 개선 방향을 빠르게 읽습니다."
+      />
 
-      <Card>
-        <CardContent>
+      <LabSurfaceCard variant="low" headerDivider={false}>
           <Typography variant="h6" gutterBottom>비교할 백테스트 실행 선택 (최대 4개)</Typography>
           {isLoading ? (
             <Skeleton variant="rectangular" height={100} />
@@ -64,20 +68,17 @@ export default function ComparePage() {
               ) : null}
             </FormGroup>
           )}
-        </CardContent>
-      </Card>
+      </LabSurfaceCard>
 
       {selectedRuns.length < 2 ? (
-        <Card>
-          <CardContent sx={{ py: 8, textAlign: 'center' }}>
-            <AlertCircle size={48} style={{ margin: '0 auto', opacity: 0.5, marginBottom: 16 }} />
-            <Typography variant="h6" color="text.secondary">
-              위에서 백테스트 실행 2개 이상을 선택하면 성과를 비교할 수 있습니다.
-            </Typography>
-          </CardContent>
-        </Card>
+        <LabSurfaceCard variant="container" headerDivider={false}>
+          <Box sx={{ py: 4 }}>
+            <AlertCircle size={40} style={{ margin: '0 auto 16px', opacity: 0.42 }} />
+            <LabEmptyState message="위에서 백테스트 실행 2개 이상을 선택하면 성과를 비교할 수 있습니다." minHeight={180} />
+          </Box>
+        </LabSurfaceCard>
       ) : (
-        <Card>
+        <LabSurfaceCard variant="container" headerDivider={false}>
           <Table>
             <TableHead>
               <TableRow>
@@ -132,7 +133,7 @@ export default function ComparePage() {
               </TableRow>
             </TableBody>
           </Table>
-        </Card>
+        </LabSurfaceCard>
       )}
     </Box>
   )

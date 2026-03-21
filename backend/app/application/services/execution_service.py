@@ -30,7 +30,7 @@ from ...domain.entities.session import (
     SignalAction,
     SignalState,
 )
-from ...domain.entities.strategy_decision import PluginAction
+from ...domain.entities.strategy_decision import PluginAction, StrategyDecision
 from .fill_engine import FillEngine
 from .risk_guard_service import RiskGuardService
 from .signal_generator import SignalGenerator
@@ -293,6 +293,24 @@ class ExecutionService:
                         decision=SignalAction.EXIT.value,
                         result=evaluation,
                     )
+            if reason is None and strategy_decision is not None:
+                runtime_condition_reason_codes = self._runtime_condition_exit_reason_codes(
+                    exit_config=exit_cfg,
+                    strategy_decision=strategy_decision,
+                    position=position,
+                    current_price=current_price,
+                )
+                if runtime_condition_reason_codes is not None:
+                    reason = ExitReason.STRATEGY_EXIT
+                    reason_codes = runtime_condition_reason_codes
+                    explain_payload = self._build_runtime_condition_exit_explain_payload(
+                        snapshot=snapshot,
+                        snapshot_key=snapshot_key,
+                        position=position,
+                        current_price=current_price,
+                        reason_codes=reason_codes,
+                        exit_config=exit_cfg,
+                    )
             if reason is None:
                 continue
 
@@ -510,6 +528,70 @@ class ExecutionService:
             "failed_conditions": [],
             "risk_blocks": [],
         }
+
+    def _build_runtime_condition_exit_explain_payload(
+        self,
+        *,
+        snapshot: MarketSnapshot,
+        snapshot_key: str,
+        position: Position,
+        current_price: float,
+        reason_codes: list[str],
+        exit_config: dict[str, object],
+    ) -> dict[str, object]:
+        payload = self._build_exit_explain_payload(
+            snapshot=snapshot,
+            snapshot_key=snapshot_key,
+            exit_config=exit_config,
+            position=position,
+            current_price=current_price,
+            reason=ExitReason.STRATEGY_EXIT,
+        )
+        payload["reason_codes"] = reason_codes
+        payload["matched_conditions"] = [f"exit.{reason_codes[0].lower()}"] if reason_codes else ["exit.strategy_exit"]
+        return payload
+
+    def _runtime_condition_exit_reason_codes(
+        self,
+        *,
+        exit_config: dict[str, object],
+        strategy_decision: StrategyDecision,
+        position: Position,
+        current_price: float,
+    ) -> list[str] | None:
+        condition_cfg = self._as_dict(exit_config.get("runtime_condition_exit"))
+        fact_label = condition_cfg.get("fact_label")
+        if not isinstance(fact_label, str) or not fact_label.strip():
+            return None
+
+        expected_value = condition_cfg.get("when_value", False)
+        require_loss = bool(condition_cfg.get("require_loss", False))
+        actual_value = self._decision_fact_value(strategy_decision, fact_label)
+        if actual_value != expected_value:
+            return None
+
+        if require_loss and not self._position_is_losing(position, current_price):
+            return None
+
+        reason_code = condition_cfg.get("reason_code")
+        if isinstance(reason_code, str) and reason_code.strip():
+            return [reason_code]
+        return [ExitReason.STRATEGY_EXIT.value]
+
+    def _decision_fact_value(self, strategy_decision: StrategyDecision, label: str) -> object | None:
+        for fact in strategy_decision.facts:
+            if fact.get("label") == label:
+                return fact.get("value")
+        return None
+
+    def _position_is_losing(self, position: Position, current_price: float) -> bool:
+        entry_price = position.avg_entry_price
+        if entry_price is None:
+            return False
+        side = position.side.upper()
+        if side in {"LONG", "BUY"}:
+            return current_price < entry_price
+        return current_price > entry_price
 
     def _resolve_candle(self, snapshot: MarketSnapshot, strategy_config: dict[str, object]) -> dict[str, float]:
         market = self._as_dict(strategy_config.get("market"))

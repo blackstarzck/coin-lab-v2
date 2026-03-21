@@ -42,11 +42,14 @@ Data source:
 - 전체 시스템 상태와 핵심 전략 성과 요약
 
 섹션:
-- 상단 상태 바
-- 전략 요약 카드
-- 후보군 요약
-- 리스크 경고 패널
-- 최근 신호 피드
+- 히어로 요약 영역
+- 전략 스트립 / 마켓 스트립
+- 전략별 성과 히스토리 차트
+- 실시간 활동 피드
+- 최근 체결 테이블
+- 전략 리더보드
+- 전략 상세 카드 그리드
+- 마켓 상세 아코디언
 
 권장 컴포넌트:
 - `StatusChip`
@@ -54,8 +57,9 @@ Data source:
 - `DataTable` 또는 `SignalFeedList`
 
 시각 메모:
-- 요약 KPI는 카드 행으로 배치하고, 경고 영역만 semantic color를 강하게 사용한다.
-- 최근 신호 피드는 dense table/list 스타일을 사용한다.
+- 대시보드는 밝은 레퍼런스의 정보 구조를 차용하되, 실제 시각 표현은 다크 프리미엄 트레이딩 룩앤필을 유지한다.
+- 화면의 중심 객체는 AI 모델이 아니라 전략이다.
+- 차트/리더보드/전략 카드가 한 화면에서 이어지되, 같은 surface 패턴과 간격 체계를 재사용한다.
 
 ## 2. Monitoring
 목적:
@@ -64,8 +68,7 @@ Data source:
 레이아웃:
 - 좌측: 세션 선택 및 비교 패널
 - 중앙: 차트 영역
-- 우측: 실시간 신호/포지션/주문 요약
-- 하단: 로그/이벤트 탭
+- 우측: `Session Detail` 탭 패널 (`Event Log / Strategy Explain / Signals / Orders / Risk`)
 
 우측 요약 필수 항목:
 - 매수/매도 신호
@@ -86,6 +89,7 @@ Data source:
 - 중앙 차트가 화면의 시각적 중심이어야 한다.
 - 선택 세션과 현재 심볼에만 accent를 사용하고 나머지는 중립 톤으로 유지한다.
 - 상세 상호작용과 상태 표현은 `MONITORING_SCREEN_SPEC.md`를 따른다.
+- 대시보드와 동일한 글로벌 셸, surface 카드, header 리듬을 사용해 제품 전체가 같은 실험실처럼 보여야 한다.
 
 Implementation note (2026-03-14):
 - The monitoring screen now uses a three-column layout.
@@ -97,6 +101,7 @@ Implementation note (2026-03-14):
 - The active session-detail tab refreshes on a 2-second interval in the monitoring screen.
 - Session list/header refresh is slower than detail polling, and position snapshots refresh separately for live PnL support.
 - New rows in the event log, signal, order, and risk tables use the same animated row-enter behavior as the dashboard.
+- Clicking a `Signals` row or a chart signal marker opens the same `Strategy Explain` selection state.
 
 ## 3. Strategies - List
 테이블 컬럼:
@@ -147,6 +152,7 @@ Implementation note (2026-03-14):
 - Risk
 - Execution
 - Backtest
+- Diff Preview
 - JSON Editor
 - Validation
 

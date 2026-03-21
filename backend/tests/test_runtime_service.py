@@ -11,7 +11,7 @@ from app.application.services.signal_generator import SignalGenerator
 from app.application.services.stream_service import StreamService
 from app.core.config import Settings
 from app.domain.entities.market import EventType, NormalizedEvent
-from app.domain.entities.session import ExecutionMode, Session, SessionStatus
+from app.domain.entities.session import ExecutionMode, FillResult, Position, PositionState, Session, SessionStatus
 from app.infrastructure.repositories.in_memory_lab_store import InMemoryLabStore
 
 
@@ -244,3 +244,90 @@ def test_manual_reevaluate_uses_manual_trigger_and_selected_symbols() -> None:
     assert all(entry.symbol == "KRW-BTC" for entry in manual_logs)
     assert {entry.event_type for entry in manual_logs} == {"EVALUATION_STARTED", "EVALUATION_COMPLETED"}
     assert "SIGNAL_EMITTED" in {entry.event_type for entry in btc_logs}
+    refreshed_session = store.get_session(session.id)
+    assert refreshed_session is not None
+    assert refreshed_session.health_json["snapshot_consistency"] == "HEALTHY"
+
+
+def test_runtime_records_realized_pnl_for_closed_position_with_exit_fill_qty() -> None:
+    runtime, store = _runtime()
+    session = _session(session_id="ses_runtime_realized")
+    store.create_session(session)
+
+    closed_position = Position(
+        id="pos_runtime_closed",
+        session_id=session.id,
+        strategy_version_id=session.strategy_version_id,
+        symbol="KRW-BTC",
+        position_state=PositionState.CLOSED,
+        side="BUY",
+        entry_time=datetime.now(UTC) - timedelta(hours=1),
+        avg_entry_price=100.0,
+        quantity=0.0,
+        stop_loss_price=95.0,
+        take_profit_price=110.0,
+        unrealized_pnl=0.0,
+        unrealized_pnl_pct=0.0,
+    )
+
+    runtime._persist_execution_result(  # noqa: SLF001 - regression coverage for monitoring PnL aggregation
+        session,
+        snapshot=type("Snapshot", (), {"symbol": "KRW-BTC"})(),
+        result={
+            "exits": [
+                {
+                    "position": closed_position,
+                    "fill": FillResult(
+                        filled=True,
+                        fill_price=110.0,
+                        fill_qty=2.0,
+                        fee_amount=0.0,
+                        slippage_amount=0.0,
+                    ),
+                    "exit_reason": "TAKE_PROFIT",
+                }
+            ]
+        },
+    )
+
+    refreshed_session = store.get_session(session.id)
+    assert refreshed_session is not None
+    assert refreshed_session.performance_json["realized_pnl"] == 20.0
+    assert refreshed_session.performance_json["trade_count"] == 1
+    assert refreshed_session.performance_json["winning_trade_count"] == 1
+    assert refreshed_session.performance_json["symbol_performance"]["KRW-BTC"]["realized_pnl"] == 20.0
+    assert refreshed_session.performance_json["symbol_performance"]["KRW-BTC"]["realized_pnl_pct"] == 10.0
+
+
+def test_runtime_reports_worker_state_and_last_event_timestamp() -> None:
+    runtime, _store = _runtime()
+    event_time = datetime.now(UTC).replace(microsecond=0)
+    runtime._last_runtime_event_at = event_time  # noqa: SLF001 - status regression coverage
+
+    status = runtime.status()
+
+    assert status["worker_alive"] is False
+    assert status["last_runtime_event_at"] == event_time
+
+
+def test_runtime_reconnects_when_connection_is_idle() -> None:
+    runtime, _store = _runtime()
+    runtime._last_runtime_event_at = datetime.now(UTC) - timedelta(seconds=runtime.IDLE_RECONNECT_TIMEOUT_SECONDS + 1)  # noqa: SLF001
+
+    assert runtime._should_reconnect_on_idle(datetime.now(UTC)) is True  # noqa: SLF001
+
+
+def test_runtime_does_not_reconnect_when_recent_event_exists() -> None:
+    runtime, _store = _runtime()
+    runtime._last_runtime_event_at = datetime.now(UTC) - timedelta(seconds=runtime.IDLE_RECONNECT_TIMEOUT_SECONDS - 2)  # noqa: SLF001
+
+    assert runtime._should_reconnect_on_idle(datetime.now(UTC)) is False  # noqa: SLF001
+
+
+def test_runtime_refresh_gate_uses_wall_clock_for_manual_snapshots() -> None:
+    runtime, _store = _runtime()
+    session_id = "ses_refresh_gate"
+    runtime._last_session_refresh_at[session_id] = datetime.now(UTC) - timedelta(seconds=5)  # noqa: SLF001
+    old_snapshot_time = datetime.now(UTC) - timedelta(minutes=10)
+
+    assert runtime._should_refresh_session_state(session_id, old_snapshot_time) is True  # noqa: SLF001

@@ -37,6 +37,8 @@ logger = get_logger(__name__)
 
 
 class RuntimeService:
+    IDLE_RECONNECT_TIMEOUT_SECONDS: int = 15
+
     def __init__(
         self,
         settings: Settings,
@@ -63,6 +65,7 @@ class RuntimeService:
         self._last_session_refresh_at: dict[str, datetime] = {}
         self._last_signal_fingerprints: dict[str, str] = {}
         self._last_risk_fingerprints: dict[str, str] = {}
+        self._last_runtime_event_at: datetime | None = None
 
     async def startup(self) -> None:
         if self.settings.app_env == "test":
@@ -94,6 +97,8 @@ class RuntimeService:
             "active_symbols": list(self._desired_symbols()),
             "connection_state": self.stream_service.connection_state,
             "reconnect_count_1h": self._reconnect_count_1h,
+            "worker_alive": bool(self._thread and self._thread.is_alive()),
+            "last_runtime_event_at": self._last_runtime_event_at,
         }
 
     def start(self) -> dict[str, object]:
@@ -191,9 +196,8 @@ class RuntimeService:
                 evaluated_symbols.append(symbol)
 
             self._refresh_open_positions(session, symbol, snapshot.latest_price)
-            if self._should_refresh_session_state(session.id, snapshot.snapshot_time):
-                self._update_session_health(session, snapshot)
-                self._recalculate_performance(session)
+            self._update_session_health(session, snapshot, trigger=EvaluationTrigger.ON_MANUAL_REEVALUATE)
+            self._recalculate_performance(session)
 
         self.stream_service.publish_monitoring_snapshot(force=True)
         return {
@@ -224,6 +228,7 @@ class RuntimeService:
             pass
 
     def ingest_normalized_event(self, event: NormalizedEvent) -> dict[str, object]:
+        self._last_runtime_event_at = event.event_time
         result = self.market_ingest_service.process_event(event)
         snapshot = result.get("snapshot")
         evaluation_snapshot = result.get("evaluation_snapshot")
@@ -277,6 +282,7 @@ class RuntimeService:
             max_queue=512,
         ) as websocket:
             self._active_socket = websocket
+            self._last_runtime_event_at = datetime.now(UTC)
             await websocket.send(json.dumps(payload))
             self.stream_service.set_runtime_state(ConnectionState.CONNECTED.value, self._reconnect_count_1h)
             logger.info("Realtime runtime subscribed to %s", ",".join(symbols))
@@ -289,6 +295,8 @@ class RuntimeService:
                 try:
                     raw_message = await asyncio.wait_for(websocket.recv(), timeout=1.0)
                 except TimeoutError:
+                    if self._should_reconnect_on_idle(datetime.now(UTC)):
+                        raise RuntimeError("runtime websocket idle timeout")
                     continue
 
                 message = self._decode_message(raw_message)
@@ -301,6 +309,11 @@ class RuntimeService:
                 await asyncio.sleep(0)
 
         self._active_socket = None
+
+    def _should_reconnect_on_idle(self, now: datetime) -> bool:
+        if self._last_runtime_event_at is None:
+            return False
+        return (now - self._last_runtime_event_at) >= timedelta(seconds=self.IDLE_RECONNECT_TIMEOUT_SECONDS)
 
     def _decode_message(self, raw_message: object) -> dict[str, object] | None:
         if isinstance(raw_message, bytes):
@@ -381,7 +394,7 @@ class RuntimeService:
                     )
             self._refresh_open_positions(session, snapshot.symbol, snapshot.latest_price)
             if self._should_refresh_session_state(session.id, snapshot.snapshot_time):
-                self._update_session_health(session, snapshot)
+                self._update_session_health(session, snapshot, trigger=trigger)
                 self._recalculate_performance(session)
 
     def _persist_execution_result(self, session: Session, snapshot: Any, result: dict[str, object]) -> None:
@@ -506,7 +519,12 @@ class RuntimeService:
                         message=f"{exit_reason} 사유로 청산이 체결되었습니다",
                         payload={"exit_reason": exit_reason},
                     )
-                    self._record_realized_pnl(session, exit_position, getattr(fill, "fill_price", None))
+                    self._record_realized_pnl(
+                        session,
+                        exit_position,
+                        getattr(fill, "fill_price", None),
+                        exit_qty=getattr(fill, "fill_qty", None),
+                    )
 
     def _save_position(self, position: Position) -> None:
         existing_positions = self.store.list_session_positions(position.session_id)
@@ -535,11 +553,19 @@ class RuntimeService:
             position.unrealized_pnl_pct = ((latest_price - entry_price) / entry_price) * 100
             self.store.update_position(position)
 
-    def _update_session_health(self, session: Session, snapshot: Any) -> None:
+    def _update_session_health(
+        self,
+        session: Session,
+        snapshot: Any,
+        *,
+        trigger: EvaluationTrigger | None = None,
+    ) -> None:
+        resolved_trigger = trigger or self._resolve_session_trigger(session)
+        snapshot_is_stale = self._is_snapshot_stale_for_session(session, snapshot, resolved_trigger)
         session.health_json = {
             **session.health_json,
             "connection_state": self.stream_service.connection_state,
-            "snapshot_consistency": "STALE" if snapshot.is_stale else "HEALTHY",
+            "snapshot_consistency": "STALE" if snapshot_is_stale else "HEALTHY",
             "late_event_count_5m": self._late_event_counts.get(session.id, 0),
             "reconnect_count_1h": self._reconnect_count_1h,
         }
@@ -578,24 +604,61 @@ class RuntimeService:
         session.updated_at = datetime.now(UTC)
         self.store.update_session(session)
 
-    def _record_realized_pnl(self, session: Session, position: Position, exit_price: float | None) -> None:
+    def _record_realized_pnl(
+        self,
+        session: Session,
+        position: Position,
+        exit_price: float | None,
+        *,
+        exit_qty: float | None = None,
+    ) -> None:
         entry_price = position.avg_entry_price or 0.0
-        if entry_price <= 0 or exit_price is None:
+        quantity = float(exit_qty) if isinstance(exit_qty, int | float) else position.quantity
+        if entry_price <= 0 or exit_price is None or quantity <= 0:
             return
-        pnl = (exit_price - entry_price) * position.quantity
+        direction = 1.0 if position.side.upper() in {"LONG", "BUY"} else -1.0
+        pnl = (exit_price - entry_price) * quantity * direction
         realized_pnl = float(session.performance_json.get("realized_pnl", 0.0)) + pnl
         trade_count = int(session.performance_json.get("trade_count", 0)) + 1
         winning_trade_count = int(session.performance_json.get("winning_trade_count", 0))
         if pnl > 0:
             winning_trade_count += 1
+        symbol_performance = self._symbol_performance_snapshot(session)
+        symbol_metrics = symbol_performance.get(position.symbol, {})
+        symbol_cost_basis = float(symbol_metrics.get("realized_cost_basis", 0.0)) + (entry_price * quantity)
+        symbol_realized_pnl = float(symbol_metrics.get("realized_pnl", 0.0)) + pnl
+        symbol_trade_count = int(symbol_metrics.get("trade_count", 0)) + 1
+        symbol_winning_trade_count = int(symbol_metrics.get("winning_trade_count", 0))
+        if pnl > 0:
+            symbol_winning_trade_count += 1
+        symbol_performance[position.symbol] = {
+            **symbol_metrics,
+            "realized_pnl": symbol_realized_pnl,
+            "realized_pnl_pct": (symbol_realized_pnl / symbol_cost_basis) * 100 if symbol_cost_basis else 0.0,
+            "realized_cost_basis": symbol_cost_basis,
+            "trade_count": symbol_trade_count,
+            "winning_trade_count": symbol_winning_trade_count,
+        }
         session.performance_json = {
             **session.performance_json,
             "realized_pnl": realized_pnl,
             "trade_count": trade_count,
             "winning_trade_count": winning_trade_count,
+            "symbol_performance": symbol_performance,
         }
         session.updated_at = datetime.now(UTC)
         self.store.update_session(session)
+
+    def _symbol_performance_snapshot(self, session: Session) -> dict[str, dict[str, float | int]]:
+        raw_metrics = session.performance_json.get("symbol_performance")
+        if not isinstance(raw_metrics, dict):
+            return {}
+        snapshot: dict[str, dict[str, float | int]] = {}
+        for symbol, metrics in raw_metrics.items():
+            if not isinstance(symbol, str) or not isinstance(metrics, dict):
+                continue
+            snapshot[symbol] = dict(metrics)
+        return snapshot
 
     def _append_strategy_log(
         self,
@@ -823,9 +886,10 @@ class RuntimeService:
 
     def _should_refresh_session_state(self, session_id: str, snapshot_time: datetime) -> bool:
         last_refresh_at = self._last_session_refresh_at.get(session_id)
-        if last_refresh_at is not None and snapshot_time - last_refresh_at < timedelta(seconds=2):
+        now = datetime.now(UTC)
+        if last_refresh_at is not None and now - last_refresh_at < timedelta(seconds=2):
             return False
-        self._last_session_refresh_at[session_id] = snapshot_time
+        self._last_session_refresh_at[session_id] = now
         return True
 
     def _should_persist_signal(self, signal: Signal) -> bool:

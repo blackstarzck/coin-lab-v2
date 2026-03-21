@@ -4,13 +4,14 @@ from collections.abc import Iterable
 
 from .base import StrategyComposer
 from .breakout import BreakoutComposer
+from .ob_fvg_bull_reclaim import ObFvgBullReclaimComposer
 from .smc_confluence import SmcConfluenceComposer
 
 
 class StrategyComposerRegistry:
     def __init__(self, composers: Iterable[StrategyComposer] | None = None) -> None:
         self._composers: dict[str, StrategyComposer] = {}
-        for composer in composers or (BreakoutComposer(), SmcConfluenceComposer()):
+        for composer in composers or (BreakoutComposer(), SmcConfluenceComposer(), ObFvgBullReclaimComposer()):
             self.register(composer)
 
     def register(self, composer: StrategyComposer) -> None:

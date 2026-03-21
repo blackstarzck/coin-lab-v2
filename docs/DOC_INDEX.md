@@ -59,6 +59,7 @@
 - [DESIGN_SYSTEM.md](./DESIGN_SYSTEM.md)
 - [AI_UI_STYLE_GUIDE.md](./AI_UI_STYLE_GUIDE.md)
 - [UI_IA.md](./UI_IA.md)
+- [DASHBOARD_IA.md](./DASHBOARD_IA.md)
 - [MONITORING_SCREEN_SPEC.md](./MONITORING_SCREEN_SPEC.md)
 - [PROJECT_STRUCTURE.md](./PROJECT_STRUCTURE.md)
 - [ENGINE_GUIDELINES.md](./ENGINE_GUIDELINES.md)
@@ -70,7 +71,9 @@
    AI implementation guardrails for spacing, hierarchy, density, and consistency.
 3. [UI_IA.md](./UI_IA.md)
    Route-level information architecture and section composition.
-4. [MONITORING_SCREEN_SPEC.md](./MONITORING_SCREEN_SPEC.md)
+4. [DASHBOARD_IA.md](./DASHBOARD_IA.md)
+   Dashboard route information architecture for the current implemented home screen.
+5. [MONITORING_SCREEN_SPEC.md](./MONITORING_SCREEN_SPEC.md)
    Monitoring route behavior, widgets, interactions, and data requirements.
 
 ## Product And System Docs

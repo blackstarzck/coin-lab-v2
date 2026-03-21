@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   Box,
   Card,
@@ -41,6 +41,7 @@ import {
   translateBacktestStatus,
   translateExitReason,
 } from '@/shared/lib/i18n'
+import { LabPageHeader } from '@/shared/ui/LabPageHeader'
 
 function getStatusColor(status: BacktestRunStatus) {
   switch (status) {
@@ -73,12 +74,12 @@ export default function BacktestsPage() {
   }
 
   return (
-    <Box sx={{ p: 3, display: 'flex', flexDirection: 'column', gap: 3 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Typography variant="h4" sx={{ fontWeight: 600 }}>
-          백테스트
-        </Typography>
-      </Box>
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <LabPageHeader
+        eyebrow="BACKTEST LAB"
+        title="백테스트"
+        description="전략 실행 규칙을 재현하고 기간별 성과를 검증하는 실험실입니다."
+      />
 
       <Box sx={{ borderBottom: 1, borderColor: 'border.default' }}>
         <Tabs value={tab} onChange={handleTabChange}>
@@ -100,21 +101,22 @@ function RunNewTab({ onRunCreated }: { onRunCreated: (id: string) => void }) {
   const runBacktest = useRunBacktest()
 
   const [strategyId, setStrategyId] = useState('')
-  const [symbols, setSymbols] = useState(DEFAULT_SYMBOLS_INPUT)
+  const [symbolsOverride, setSymbolsOverride] = useState<string | null>(null)
   const [timeframes, setTimeframes] = useState('1h,4h')
   const [dateFrom, setDateFrom] = useState('2023-01-01')
   const [dateTo, setDateTo] = useState('2023-12-31')
   const [initialCapital, setInitialCapital] = useState('10000')
   const { data: strategyVersions } = useStrategyVersions(strategyId)
 
-  useEffect(() => {
+  const derivedSymbols = useMemo(() => {
     if (!strategyId) {
-      return
+      return DEFAULT_SYMBOLS_INPUT
     }
 
     const defaultSymbols = getStrategyStaticSymbols((strategyVersions?.[0]?.config_json ?? {}) as Record<string, unknown>)
-    setSymbols(defaultSymbols.length > 0 ? defaultSymbols.join(', ') : DEFAULT_SYMBOLS_INPUT)
+    return defaultSymbols.length > 0 ? defaultSymbols.join(', ') : DEFAULT_SYMBOLS_INPUT
   }, [strategyId, strategyVersions])
+  const symbols = symbolsOverride ?? derivedSymbols
 
   const handleRun = async () => {
     if (!strategyId) return
@@ -151,7 +153,10 @@ function RunNewTab({ onRunCreated }: { onRunCreated: (id: string) => void }) {
               <Select
                 value={strategyId}
                 label="전략"
-                onChange={(e) => setStrategyId(e.target.value)}
+                onChange={(e) => {
+                  setStrategyId(e.target.value)
+                  setSymbolsOverride(null)
+                }}
                 disabled={isLoadingStrategies}
               >
                 {strategies?.map((s) => (
@@ -179,7 +184,7 @@ function RunNewTab({ onRunCreated }: { onRunCreated: (id: string) => void }) {
               fullWidth
               label="심볼 (쉼표로 구분)"
               value={symbols}
-              onChange={(e) => setSymbols(e.target.value)}
+              onChange={(e) => setSymbolsOverride(e.target.value)}
               helperText="정적 전략은 기본 코인 목록이 자동 입력됩니다. 비우면 전략 기본값을 사용합니다."
             />
           </Grid>
