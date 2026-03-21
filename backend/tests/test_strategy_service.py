@@ -10,6 +10,8 @@ from app.infrastructure.repositories.in_memory_lab_store import InMemoryLabStore
 from app.infrastructure.repositories.default_strategy_seeds import (
     DEFAULT_OB_FVG_STRATEGY_KEY,
     DEFAULT_OB_FVG_VERSION_ID,
+    DEFAULT_ZENITH_HAZEL_STRATEGY_KEY,
+    DEFAULT_ZENITH_HAZEL_VERSION_ID,
     seed_default_strategies,
 )
 from app.schemas.session import SessionCreate
@@ -109,6 +111,23 @@ def test_in_memory_seed_defaults_register_ob_fvg_strategy_version() -> None:
     assert version.config_json["plugin_id"] == "ob_fvg_bull_reclaim_v1"
 
 
+def test_in_memory_seed_defaults_register_zenith_strategy_version() -> None:
+    store = InMemoryLabStore()
+    seed_default_strategies(store)
+
+    strategies = store.list_strategies()
+    seeded = next((item for item in strategies if item.strategy_key == DEFAULT_ZENITH_HAZEL_STRATEGY_KEY), None)
+
+    assert seeded is not None
+    assert seeded.latest_version_id == DEFAULT_ZENITH_HAZEL_VERSION_ID
+
+    version = store.get_strategy_version(DEFAULT_ZENITH_HAZEL_VERSION_ID)
+
+    assert version is not None
+    assert version.is_validated is True
+    assert version.config_json["plugin_id"] == "zenith_hazel_v1"
+
+
 def test_seed_defaults_links_latest_version_after_both_rows_exist() -> None:
     class RecordingStore(InMemoryLabStore):
         def __init__(self) -> None:
@@ -128,5 +147,5 @@ def test_seed_defaults_links_latest_version_after_both_rows_exist() -> None:
 
     seed_default_strategies(store)
 
-    assert store.created_strategy_latest_version_ids == [None]
-    assert store.updated_strategy_latest_version_ids == [DEFAULT_OB_FVG_VERSION_ID]
+    assert store.created_strategy_latest_version_ids == [None, None]
+    assert store.updated_strategy_latest_version_ids == [DEFAULT_OB_FVG_VERSION_ID, DEFAULT_ZENITH_HAZEL_VERSION_ID]

@@ -6,12 +6,13 @@ from .base import StrategyComposer
 from .breakout import BreakoutComposer
 from .ob_fvg_bull_reclaim import ObFvgBullReclaimComposer
 from .smc_confluence import SmcConfluenceComposer
+from .zenith_hazel import ZenithHazelComposer
 
 
 class StrategyComposerRegistry:
     def __init__(self, composers: Iterable[StrategyComposer] | None = None) -> None:
         self._composers: dict[str, StrategyComposer] = {}
-        for composer in composers or (BreakoutComposer(), SmcConfluenceComposer(), ObFvgBullReclaimComposer()):
+        for composer in composers or (BreakoutComposer(), SmcConfluenceComposer(), ObFvgBullReclaimComposer(), ZenithHazelComposer()):
             self.register(composer)
 
     def register(self, composer: StrategyComposer) -> None:

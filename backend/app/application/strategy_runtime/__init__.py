@@ -5,6 +5,7 @@ from .composers import (
     SmcConfluenceComposer,
     StrategyComposer,
     StrategyComposerRegistry,
+    ZenithHazelComposer,
 )
 from .detectors import (
     DetectorContext,
@@ -41,6 +42,7 @@ __all__ = [
     "StrategyComposerRegistry",
     "SwingTrendContextDetector",
     "TrendContextDetector",
+    "ZenithHazelComposer",
     "average_true_range",
     "build_structure_id",
     "draft_to_explain_payload",

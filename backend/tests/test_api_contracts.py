@@ -68,7 +68,7 @@ def test_tc_api_001c_plugin_catalog_response_shape() -> None:
     _assert_trace_and_timestamp(body)
 
     plugin_ids = {item["plugin_id"] for item in body["data"]}
-    assert {"breakout_v1", "smc_confluence_v1", "ob_fvg_bull_reclaim_v1"}.issubset(plugin_ids)
+    assert {"breakout_v1", "smc_confluence_v1", "ob_fvg_bull_reclaim_v1", "zenith_hazel_v1"}.issubset(plugin_ids)
 
     ob_fvg = next(item for item in body["data"] if item["plugin_id"] == "ob_fvg_bull_reclaim_v1")
     assert ob_fvg["label"] == "OB FVG Bull Reclaim V1"
@@ -76,6 +76,13 @@ def test_tc_api_001c_plugin_catalog_response_shape() -> None:
     assert ob_fvg["default_config"]["timeframe"] == "15m"
     assert isinstance(ob_fvg["fields"], list)
     assert any(field["key"] == "trend_timeframe" for field in ob_fvg["fields"])
+
+    zenith = next(item for item in body["data"] if item["plugin_id"] == "zenith_hazel_v1")
+    assert zenith["label"] == "Zenith Hazel V1"
+    assert isinstance(zenith["default_config"], dict)
+    assert zenith["default_config"]["regime_timeframe"] == "1h"
+    assert isinstance(zenith["fields"], list)
+    assert any(field["key"] == "volume_surge_ratio" for field in zenith["fields"])
 
 
 def test_tc_api_002_validation_error_payload_shape() -> None:

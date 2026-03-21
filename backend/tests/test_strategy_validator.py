@@ -415,6 +415,44 @@ def test_valid_ob_fvg_bull_reclaim_plugin_type() -> None:
     assert _issues(result, "errors") == []
 
 
+def test_valid_zenith_hazel_plugin_type() -> None:
+    config = _base_config()
+    config["type"] = "plugin"
+    config["plugin_id"] = "zenith_hazel_v1"
+    config["plugin_version"] = "1.0.0"
+    config["plugin_config"] = {
+        "timeframe": "15m",
+        "regime_timeframe": "1h",
+        "regime_lookback": 12,
+        "swing_width": 3,
+        "breakout_lookback": 20,
+        "momentum_lookback": 6,
+        "ema_fast_length": 9,
+        "ema_slow_length": 21,
+        "atr_length": 14,
+        "min_regime_confidence": 0.22,
+        "min_signal_confidence": 0.72,
+        "min_signal_score": 4,
+        "breakout_buffer_pct": 0.001,
+        "min_momentum_pct": 0.004,
+        "volume_surge_ratio": 1.2,
+        "min_close_strength": 0.58,
+        "high_volatility_atr_pct": 0.03,
+        "stop_buffer_pct": 0.002,
+        "exit_breakdown_pct": 0.005,
+        "rr_target": 2.0,
+        "time_exit_bars": 24,
+        "allow_high_volatility_breakout": False,
+    }
+    config["entry"] = {}
+    config["exit"] = {"time_stop_bars": 24}
+
+    result = StrategyValidator().validate(config, strict=False)
+
+    assert result["valid"] is True
+    assert _issues(result, "errors") == []
+
+
 def test_valid_hybrid_type_with_registered_composer() -> None:
     config = _base_config()
     config["type"] = "hybrid"
