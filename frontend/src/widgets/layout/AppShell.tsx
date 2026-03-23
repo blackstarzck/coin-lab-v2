@@ -70,18 +70,41 @@ export function AppShell() {
         }}
       >
         <Stack direction="row" spacing={4} alignItems="center">
-          <Typography
-            variant="h6"
-            sx={{
-              fontSize: 24,
-              color: 'text.primary',
-              letterSpacing: '-0.04em',
-              cursor: 'pointer',
-            }}
-            onClick={() => navigate('/')}
-          >
-            COIN LAB
-          </Typography>
+          <Stack direction="row" spacing={1.25} alignItems="center">
+            <Typography
+              variant="h6"
+              sx={{
+                fontSize: 24,
+                color: 'text.primary',
+                letterSpacing: '-0.04em',
+                cursor: 'pointer',
+              }}
+              onClick={() => navigate('/')}
+            >
+              COIN LAB
+            </Typography>
+            <Box
+              sx={{
+                px: 1,
+                py: 0.35,
+                borderRadius: '999px',
+                border: `1px solid ${alpha(theme.palette.primary.main, 0.35)}`,
+                backgroundColor: alpha(theme.palette.primary.main, 0.08),
+              }}
+            >
+              <Typography
+                variant="caption"
+                sx={{
+                  display: 'block',
+                  color: 'primary.main',
+                  fontWeight: 700,
+                  letterSpacing: '0.04em',
+                }}
+              >
+                DEPLOY TEST 0323
+              </Typography>
+            </Box>
+          </Stack>
           <Stack direction="row" spacing={2.5} sx={{ display: { xs: 'none', md: 'flex' } }}>
             {TOP_NAV.map((item) => (
               <Box
