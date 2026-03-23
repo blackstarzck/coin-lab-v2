@@ -1,0 +1,350 @@
+아래 문서는 **“승률 90%”가 나온 최종 전략(BEST)**을 **정형화**해서, 그대로 개발팀이 구현할 수 있도록 만든 **실전 개발 문서**야.
+(백테스트 구간: **2026-02 KRW-XRP, 15분봉**, 수수료 0.05%/side 기준 / 거래수 10회 / 승률 90% / 수익률 +1.009% / MDD -0.405%)
+
+---
+
+# XRP Mean-Reversion Confirmed Strategy (90% Win-Rate) — Dev Spec
+
+## 0) 전략 개요
+
+### 목표
+
+* **승률 ≥ 55%**가 아니라, 본 전략은 검증 구간에서 **승률 90%**를 달성한 조합을 제품화한다.
+* 과매매를 피하고, “하단 과매도 → 반등 확증 → 짧게 수익 실현”에 집중한다.
+
+### 핵심 아이디어(승률을 만든 이유)
+
+1. **볼린저 하단 이탈 후 복귀(Mean Reversion Trigger)**
+2. **다음 봉 양봉 확인(확증)**
+3. **특정 시간대(13시) 진입 금지(노이즈/불리 구간 차단)**
+4. **짧은 TP + 부분익절 + 트레일링으로 손실 확률을 낮춤**
+
+---
+
+## 1) 데이터 요구사항
+
+### 필수 캔들(OHLCV)
+
+* 타임프레임: **15m**
+* 필드: `timestamp`, `open`, `high`, `low`, `close`, `volume`
+
+### 옵션(권장)
+
+* 주문/체결 로그(실체결 가격 추정, 슬리피지 측정)
+* 호가(오더북) 데이터(슬리피지/충격비용 강화)
+
+---
+
+## 2) 파라미터(설정값)
+
+아래는 **승률 90% 성능을 만든 BEST 세팅**(기본값).
+
+```json
+{
+  "symbol": "KRW-XRP",
+  "timeframe": "15m",
+  "position": {
+    "max_position_ratio": 0.20,
+    "fee_per_side": 0.0005
+  },
+  "filters": {
+    "exclude_entry_hours_kst": [13],
+    "max_adx": 35,
+    "rsi_slope_min": 1.0,
+    "confirm_next_green_candle": true
+  },
+  "entry": {
+    "bb_period": 20,
+    "bb_std": 2.0
+  },
+  "risk": {
+    "atr_period": 14,
+    "stop_mult_ranging": 3.5,
+    "stop_mult_trending": 2.2,
+    "stop_mult_volatile": 2.5
+  },
+  "take_profit": {
+    "tp_pct": 0.006,
+    "partial_ratio": 0.50,
+    "trailing_atr_mult": 1.2
+  },
+  "time_exit": {
+    "max_hold_bars": 10
+  }
+}
+```
+
+---
+
+## 3) 지표 정의
+
+### Bollinger Bands (BB)
+
+* `MA20 = SMA(close, 20)`
+* `STD20 = STD(close, 20)`
+* `BB_LO = MA20 - 2*STD20`
+* `BB_MID = MA20`
+
+### ATR(14)
+
+* Wilder ATR(14) 권장(백테스트와 동일하게 맞추기)
+
+### ADX(14)
+
+* Wilder ADX(14)
+
+### RSI slope
+
+* RSI(14) 기반
+* `rsi_slope = RSI14(t) - RSI14(t-3)`
+* 진입 조건: `rsi_slope >= 1.0`
+
+### Regime(시장상태) 분류(프록시)
+
+* `ADX < 20` → Ranging
+* `20 ≤ ADX < 35` → Trending
+* `ADX ≥ 35` → Volatile
+
+> 주의: 기존 스펙이 BTC ADX 같은 외부 레퍼런스를 쓰는 경우, 운영환경에서 대체 지표를 결정해야 함.
+
+---
+
+## 4) 진입 규칙(Entry)
+
+### 트리거: “하단 이탈 후 복귀”
+
+현재 캔들 t에서:
+
+* `low[t] < BB_LO[t]`  (하단 이탈)
+* `close[t] > BB_LO[t]` (하단 위로 복귀)
+
+### 추가 필터(승률 핵심)
+
+* (시간대 필터) 진입 실행 시각 기준(KST):
+
+  * `hour(entry_execution_time_kst) != 13`
+* (추세 과강도 회피)
+
+  * `ADX[t] <= 35`
+* (반등 힘 확인)
+
+  * `rsi_slope[t] >= 1.0`
+* (다음 봉 양봉 확증)
+
+  * 진입은 “다음 캔들(t+1) open”에서 실행되며,
+  * 그 (t+1) 캔들이 **양봉**일 때만 진입 허용:
+
+    * `close[t+1] > open[t+1]`
+
+### 진입 가격
+
+* 기본: **다음 캔들 시가** (시뮬/테스트 일치)
+* 실거래: 시장가/지정가 전략은 구현 선택
+
+  * 시장가 시 슬리피지 체크(옵션): 슬리피지 상한 초과 시 진입 취소
+
+---
+
+## 5) 포지션 사이징
+
+* `position_value = equity * max_position_ratio`
+* 매수 수량:
+
+  * `qty = position_value / entry_price`
+* 수수료:
+
+  * 매수/매도 각각 `fee_per_side`
+
+---
+
+## 6) 손절 규칙(Stop Loss)
+
+진입 시점 t에서 ATR을 기반으로 동적 손절가 설정:
+
+* Ranging: `stop = entry - 3.5 * ATR14[t]`
+* Trending: `stop = entry - 2.2 * ATR14[t]`
+* Volatile: `stop = entry - 2.5 * ATR14[t]`
+
+운영 팁:
+
+* 실제 체결/슬리피지 고려해서 `stop`은 “트리거 가격”이고, 실행은 시장가/지정가로 처리.
+
+---
+
+## 7) 익절 규칙(Partial TP + Trailing)
+
+### 1차 익절(부분 익절)
+
+* 조건: `high >= entry * (1 + 0.006)` (0.6% 도달)
+* 실행: 다음 캔들 open(또는 즉시 체결 모델)
+* 비중: 보유 수량의 **50% 매도**
+
+### 잔량 트레일링
+
+* 1차 익절 이후부터 트레일링 활성화:
+* `trailing_stop = close - 1.2 * ATR14`
+* 매 캔들마다 trailing_stop을 갱신(상향만 허용)
+
+---
+
+## 8) 시간 청산(Time Exit)
+
+* 진입 후 `max_hold_bars = 10`을 초과하면 전량 청산
+* 실행 가격: 다음 캔들 open(권장)
+
+---
+
+## 9) 상태 머신(State Machine)
+
+### 상태 정의
+
+* `FLAT` : 포지션 없음
+* `WAIT_CONFIRM` : BB복귀 트리거 후 “다음 봉 양봉” 확인 대기
+* `IN_POSITION` : 포지션 보유(부분익절 전)
+* `IN_TRAIL` : 부분익절 완료 후 트레일링 구간
+
+### 이벤트
+
+* `onCandleClose(t)` : 캔들 마감 시 지표 업데이트/신호 평가
+* `onCandleOpen(t+1)` : 주문 실행(진입/청산)
+* `onStopTriggered` : 손절 트리거
+* `onTPTriggered` : 익절 트리거
+* `onTimeExit` : 보유시간 초과
+
+---
+
+## 10) 의사코드(Pseudocode)
+
+```python
+state = FLAT
+pos = None  # {entry_price, qty, entry_index, stop_price, partial_done, trailing_stop}
+
+def on_candle_close(t):
+    update_indicators(t)
+
+    if state == FLAT:
+        if not entry_hour_allowed(t+1): return
+        if adx[t] > MAX_ADX: return
+        if rsi_slope[t] < RSI_SLOPE_MIN: return
+
+        # Mean reversion trigger: pierce below BB_LO then recover above BB_LO
+        if low[t] < bb_lo[t] and close[t] > bb_lo[t]:
+            state = WAIT_CONFIRM
+            set_pending_entry(t+1)
+
+    elif state in (IN_POSITION, IN_TRAIL):
+        # trailing stop update only after partial TP
+        if pos.partial_done:
+            new_trail = close[t] - TRAIL_ATR_MULT * atr[t]
+            pos.trailing_stop = max(pos.trailing_stop, new_trail)
+
+        # time exit
+        if (t - pos.entry_index) >= MAX_HOLD_BARS:
+            place_sell_all_order(t+1, reason="TIME_EXIT")
+            state = FLAT
+            pos = None
+
+def on_candle_open(t):
+    # execute pending entry at open(t)
+    if state == WAIT_CONFIRM:
+        # confirm next candle green
+        if CONFIRM_NEXT_GREEN and close[t] <= open[t]:
+            state = FLAT
+            return
+
+        entry_price = open[t]
+        qty = calc_qty(entry_price)
+        stop_price = entry_price - stop_mult_by_regime(t-1) * atr[t-1]
+        place_buy_order(t, qty)
+
+        pos = {
+            "entry_price": entry_price,
+            "qty": qty,
+            "entry_index": t,
+            "stop_price": stop_price,
+            "partial_done": False,
+            "trailing_stop": None
+        }
+        state = IN_POSITION
+
+    # manage exits at open(t) using triggers computed from t-1 close
+    if state in (IN_POSITION, IN_TRAIL):
+        # stop
+        if low[t] <= pos.stop_price or (pos.trailing_stop and low[t] <= pos.trailing_stop):
+            place_sell_all_order(t, reason="STOP_OR_TRAIL")
+            state = FLAT
+            pos = None
+            return
+
+        # partial TP
+        if not pos.partial_done and high[t] >= pos.entry_price * (1 + TP_PCT):
+            sell_qty = pos.qty * PARTIAL_RATIO
+            place_sell_order(t, sell_qty, reason="TP_PARTIAL")
+            pos.qty -= sell_qty
+            pos.partial_done = True
+            pos.trailing_stop = close[t] - TRAIL_ATR_MULT * atr[t-1]
+            state = IN_TRAIL
+```
+
+---
+
+## 11) 이벤트 흐름도(mermaid)
+
+```mermaid
+flowchart TD
+  A[FLAT] -->|BB 하단 이탈+복귀 & 필터 통과| B[WAIT_CONFIRM]
+  B -->|다음봉 양봉| C[IN_POSITION]
+  B -->|다음봉 음봉| A
+
+  C -->|TP 0.6% 도달| D[IN_TRAIL]
+  C -->|STOP 손절| A
+  C -->|보유시간 초과| A
+
+  D -->|Trailing stop hit| A
+  D -->|보유시간 초과| A
+```
+
+---
+
+## 12) 운영/모니터링 체크리스트
+
+### 필수 로그
+
+* 신호 발생 시점(t): 지표 값(BB_LO, ADX, ATR, RSI slope, regime)
+* 진입/청산 주문:
+
+  * 주문 시각, 주문가, 체결가, 수량, 수수료
+* 청산 사유:
+
+  * `TP_PARTIAL`, `STOP`, `TRAIL`, `TIME_EXIT`
+
+### 핵심 모니터링 지표
+
+* 월간/주간 승률, 평균 손익, MDD
+* 시간대별 성과(특히 13시 제외가 계속 유효한지)
+* 슬리피지/체결 품질(실거래에서 가장 먼저 무너지는 지점)
+
+---
+
+## 13) 주의사항(리스크/오버피팅 방지)
+
+* **“13시 제외”와 “다음봉 양봉 확증”은 이 데이터 구간에서 강하게 먹힌 규칙**이므로,
+
+  * 다른 월/다른 장세에서 유지되는지 반드시 확인해야 함(워크포워드/월별 분리검증 권장).
+* 거래 수가 10회로 많지 않으니, 운영 전 최소 3~6개월 데이터로 재검증 권장.
+
+---
+
+## 14) 개발 산출물 체크리스트
+
+* [ ] 캔들 수집/저장 모듈(15m)
+* [ ] 지표 계산 모듈(BB/ATR/ADX/RSI slope)
+* [ ] 시그널 엔진(상태머신)
+* [ ] 주문 실행기(시장가/지정가, 수수료/슬리피지 처리)
+* [ ] 리스크 모듈(포지션 제한, 손절/트레일)
+* [ ] 로깅/리포팅(백테스트와 동일 포맷)
+* [ ] 시뮬레이터(백테스트 재현 가능하게)
+
+---
+
+원하면, 이 문서를 그대로 **README/PRD + 구현 태스크 목록(Jira/Redmine 티켓 템플릿)** 형태로도 변환해주고, **NestJS(백엔드) + React(프론트) 기준의 모듈 구조**까지 잡아서 “개발 바로 시작” 가능한 수준으로 쪼개줄게.

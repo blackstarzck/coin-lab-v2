@@ -32,6 +32,10 @@ Thumbs.db
 
 # Logs
 *.log
+backend/*.out
+backend/*.err
+backend/logs/*
+!backend/logs/.gitkeep
 
 # Secrets
 keys.txt
