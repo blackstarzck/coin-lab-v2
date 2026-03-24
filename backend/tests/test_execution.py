@@ -68,6 +68,34 @@ def test_position_size_defaults_to_ten_percent_of_initial_capital() -> None:
     assert qty == pytest.approx(1_000.0)
 
 
+def test_rsi_range_uses_default_length_when_legacy_config_omits_it() -> None:
+    execution, _risk, _fill, _signals = _services()
+    config = _base_strategy_config()
+    config["market"] = {"timeframes": ["5m"]}
+    config["entry"] = {
+        "logic": "all",
+        "conditions": [
+            {
+                "type": "rsi_range",
+                "source": {"kind": "indicator", "name": "rsi"},
+                "min": 0,
+                "max": 100,
+            }
+        ],
+    }
+
+    result = execution.process_snapshot(
+        _session(),
+        config,
+        _snapshot_with_history([100.0 + index for index in range(20)], timeframe="5m"),
+    )
+
+    signal = result.get("signal")
+    assert bool(result.get("accepted")) is True
+    assert isinstance(signal, Signal)
+    assert signal.blocked is False
+
+
 def test_fixed_amount_position_size_uses_krw_notional() -> None:
     execution, _, _, _ = _services()
     qty = execution._calculate_position_size(  # noqa: SLF001 - sizing behavior is the unit under test

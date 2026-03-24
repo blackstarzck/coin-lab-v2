@@ -39,6 +39,12 @@ This means one incoming update can refresh multiple visible sections at once.
 - The monitoring summary websocket is global.
 - Chart and price websockets are page-scoped and selection-scoped.
 
+### 4. Runtime lag is handled defensively
+- The runtime now treats websocket receive time and market event time separately.
+- Session freshness still uses market event time.
+- When trade ticks arrive far behind real receive time, the runtime drops those lagged ticks instead of replaying a large stale backlog.
+- Repeated stale-snapshot skip logs are throttled to avoid turning a lag spike into a database write storm.
+
 ## System-Wide Startup Flow
 ```mermaid
 flowchart LR

@@ -192,6 +192,25 @@ def test_runtime_skips_stale_snapshot_execution_and_logs_reason() -> None:
     assert skip_logs[0].payload["reason_code"] == "EXEC_SNAPSHOT_STALE"
 
 
+def test_runtime_drops_lagged_trade_event_before_evaluation() -> None:
+    runtime, store = _runtime()
+    session = _session(trigger="ON_TICK_BATCH", session_id="ses_runtime_lagged")
+    store.create_session(session)
+
+    event_time = datetime.now(UTC) - timedelta(seconds=45)
+    received_at = datetime.now(UTC)
+
+    result = runtime.ingest_normalized_event(_event("lagged-1", event_time, received_at))
+    logs = store.query_logs("strategy-execution", session_id=session.id, limit=20)
+    refreshed_session = store.get_session(session.id)
+
+    assert result["accepted"] is False
+    assert result["reason"] == "EVT_LAGGED_DROPPED"
+    assert logs == []
+    assert refreshed_session is not None
+    assert refreshed_session.health_json == {}
+
+
 def test_manual_reevaluate_uses_manual_trigger_and_selected_symbols() -> None:
     runtime, store = _runtime()
     session = _session(session_id="ses_runtime_manual")
@@ -308,6 +327,16 @@ def test_runtime_reports_worker_state_and_last_event_timestamp() -> None:
 
     assert status["worker_alive"] is False
     assert status["last_runtime_event_at"] == event_time
+
+
+def test_runtime_tracks_last_event_timestamp_from_received_at() -> None:
+    runtime, _store = _runtime()
+    event_time = datetime.now(UTC) - timedelta(minutes=5)
+    received_at = datetime.now(UTC).replace(microsecond=0)
+
+    runtime.ingest_normalized_event(_event("received-at", event_time, received_at))
+
+    assert runtime.status()["last_runtime_event_at"] == received_at
 
 
 def test_runtime_reconnects_when_connection_is_idle() -> None:

@@ -65,6 +65,7 @@ class RuntimeService:
         self._last_session_refresh_at: dict[str, datetime] = {}
         self._last_signal_fingerprints: dict[str, str] = {}
         self._last_risk_fingerprints: dict[str, str] = {}
+        self._last_skip_log_at: dict[str, datetime] = {}
         self._last_runtime_event_at: datetime | None = None
 
     async def startup(self) -> None:
@@ -228,7 +229,7 @@ class RuntimeService:
             pass
 
     def ingest_normalized_event(self, event: NormalizedEvent) -> dict[str, object]:
-        self._last_runtime_event_at = event.event_time
+        self._last_runtime_event_at = event.received_at
         result = self.market_ingest_service.process_event(event)
         snapshot = result.get("snapshot")
         evaluation_snapshot = result.get("evaluation_snapshot")
@@ -357,18 +358,19 @@ class RuntimeService:
                 skip_reason = self._evaluation_skip_reason(session, selected_snapshot, trigger)
                 if skip_reason is not None:
                     reason_code, reason_detail = skip_reason
-                    self._append_strategy_log(
-                        session=session,
-                        snapshot=selected_snapshot,
-                        level="WARNING",
-                        event_type="EVALUATION_SKIPPED",
-                        message="전략 평가를 건너뛰었습니다",
-                        payload={
-                            **self._evaluation_payload(trigger, selected_snapshot),
-                            "reason_code": reason_code,
-                            "reason_detail": reason_detail,
-                        },
-                    )
+                    if self._should_log_evaluation_skip(session.id, selected_snapshot.symbol, trigger, reason_code):
+                        self._append_strategy_log(
+                            session=session,
+                            snapshot=selected_snapshot,
+                            level="WARNING",
+                            event_type="EVALUATION_SKIPPED",
+                            message="전략 평가를 건너뛰었습니다",
+                            payload={
+                                **self._evaluation_payload(trigger, selected_snapshot),
+                                "reason_code": reason_code,
+                                "reason_detail": reason_detail,
+                            },
+                        )
                 else:
                     self._mark_evaluation_marker(session, selected_snapshot, trigger)
                     self._append_strategy_log(
@@ -914,4 +916,21 @@ class RuntimeService:
         if self._last_risk_fingerprints.get(key) == fingerprint:
             return False
         self._last_risk_fingerprints[key] = fingerprint
+        return True
+
+    def _should_log_evaluation_skip(
+        self,
+        session_id: str,
+        symbol: str,
+        trigger: EvaluationTrigger,
+        reason_code: str,
+    ) -> bool:
+        if reason_code != error_codes.EXEC_SNAPSHOT_STALE:
+            return True
+        now = datetime.now(UTC)
+        key = f"{session_id}:{symbol}:{trigger.value}:{reason_code}"
+        last_logged_at = self._last_skip_log_at.get(key)
+        if last_logged_at is not None and now - last_logged_at < timedelta(seconds=60):
+            return False
+        self._last_skip_log_at[key] = now
         return True

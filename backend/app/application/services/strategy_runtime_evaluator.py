@@ -430,7 +430,7 @@ class StrategyRuntimeEvaluator:
             if name == "ema":
                 value = self._ema(usable, self._as_int(self._params(ref).get("length"), 0))
             elif name == "rsi":
-                value = self._rsi(usable, self._as_int(self._params(ref).get("length"), 0))
+                value = self._rsi(usable, self._indicator_length(ref, default=14))
             facts = [self._item(self._source_label(ref), value)] if value is not None else []
             return SourceResolution(
                 ready=value is not None,
@@ -736,6 +736,12 @@ class StrategyRuntimeEvaluator:
     def _params(self, ref: dict[str, object]) -> dict[str, object]:
         value = ref.get("params")
         return cast(dict[str, object], value) if isinstance(value, dict) else {}
+
+    def _indicator_length(self, ref: dict[str, object], *, default: int) -> int:
+        raw = self._params(ref).get("length")
+        if isinstance(raw, int) and raw > 0:
+            return raw
+        return default
 
     def _timeframe_for_ref(self, ref: dict[str, object], default_timeframe: str) -> str:
         for key in ("timeframe", "base"):

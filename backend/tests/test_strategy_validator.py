@@ -313,6 +313,25 @@ def test_rsi_range_min_gt_max() -> None:
     assert "DSL_INVALID_THRESHOLD_RANGE" in _codes(_issues(result, "errors"))
 
 
+def test_rsi_range_requires_indicator_length() -> None:
+    config = _base_config()
+    config["entry"] = {
+        "logic": "all",
+        "conditions": [
+            {
+                "type": "rsi_range",
+                "source": {"kind": "indicator", "name": "rsi"},
+                "min": 30,
+                "max": 70,
+            }
+        ],
+    }
+
+    result = StrategyValidator().validate(config, strict=False)
+
+    assert "DSL_INVALID_SOURCE_REF" in _codes(_issues(result, "errors"))
+
+
 def test_negative_stop_loss_pct() -> None:
     config = _base_config()
     config["exit"] = {"stop_loss_pct": -0.01, "take_profit_pct": 0.02}

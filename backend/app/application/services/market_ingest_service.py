@@ -44,6 +44,7 @@ class MarketIngestService:
     BUFFER_MAX_AGE_MS: int = 250
     BUFFER_MAX_SIZE: int = 200
     REORDER_WINDOW_SECONDS: int = 2
+    MAX_TRADE_EVENT_LAG_SECONDS: int = 30
 
     DEDUPE_TTL_TICK: timedelta = timedelta(minutes=10)
     DEDUPE_TTL_CANDLE: timedelta = timedelta(hours=48)
@@ -290,6 +291,9 @@ class MarketIngestService:
         if self.is_duplicate(event):
             return {"accepted": False, "event_type": event.event_type.value, "reason": error_codes.EVT_DUPLICATE_DROPPED}
 
+        if self.is_lagged(event):
+            return {"accepted": False, "event_type": event.event_type.value, "reason": error_codes.EVT_LAGGED_DROPPED}
+
         if not self.check_ordering(event):
             return {"accepted": False, "event_type": event.event_type.value, "reason": error_codes.EVT_OUT_OF_ORDER_DROPPED}
 
@@ -382,6 +386,25 @@ class MarketIngestService:
             }
 
         return {"accepted": True, "event_type": event.event_type.value, "reason": "tick_buffered"}
+
+    def is_lagged(self, event: NormalizedEvent) -> bool:
+        if event.event_type != EventType.TRADE_TICK:
+            return False
+        lag_seconds = (event.received_at - event.event_time).total_seconds()
+        if lag_seconds <= self.MAX_TRADE_EVENT_LAG_SECONDS:
+            return False
+        logger.warning(
+            "Lagged trade event dropped",
+            extra={
+                "error_code": error_codes.EVT_LAGGED_DROPPED,
+                "symbol": event.symbol,
+                "event_time": event.event_time.isoformat(),
+                "received_at": event.received_at.isoformat(),
+                "lag_seconds": lag_seconds,
+            },
+        )
+        self.flush_buffer(event.symbol)
+        return True
 
     def ingest_event(self, event: dict[str, object]) -> dict[str, object]:
         event_type_raw = event.get("event_type")

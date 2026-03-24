@@ -563,6 +563,16 @@ class StrategyValidator:
             self._add_issue(errors, error_codes.DSL_INVALID_SOURCE_REF, "price SourceRef에는 'field'가 필요합니다.", f"{path}.field")
         if kind == "indicator" and not isinstance(source_ref.get("name"), str):
             self._add_issue(errors, error_codes.DSL_INVALID_SOURCE_REF, "indicator SourceRef에는 'name'이 필요합니다.", f"{path}.name")
+        if kind == "indicator" and source_ref.get("name") == "rsi":
+            params = self._as_dict(source_ref.get("params"))
+            length = params.get("length")
+            if not isinstance(length, int) or length <= 0:
+                self._add_issue(
+                    errors,
+                    error_codes.DSL_INVALID_SOURCE_REF,
+                    "rsi SourceRef에는 양의 정수 params.length가 필요합니다.",
+                    f"{path}.params.length",
+                )
         if kind == "constant" and "value" not in source_ref:
             self._add_issue(errors, error_codes.DSL_INVALID_SOURCE_REF, "constant SourceRef에는 'value'가 필요합니다.", f"{path}.value")
 
